@@ -1,0 +1,27 @@
+{
+  "name": "intersearch-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "vite --port 5173 --strictPort",
+    "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc -b --noEmit",
+    "preview": "vite preview --port 5173"
+  },
+  "dependencies": {
+    "vue": "^3.5.43",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.1",
+    "vue-tsc": "^3.3.11"
+  }
+}

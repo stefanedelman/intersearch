@@ -1,0 +1,266 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RunStatus {
+  running
+  complete
+  partial
+  failed
+}
+
+enum FetchStatus {
+  fetched
+  skipped_seen
+  rejected
+  failed
+}
+
+enum ReportSection {
+  new
+  still
+  returned
+  dropped
+}
+
+// One row per Supabase Auth user. Supabase owns credentials and email;
+// this table only maps usernames to auth user ids. No password or hash column.
+model Profile {
+  id                 String   @id @db.Uuid
+  username           String
+  normalizedUsername String   @unique
+  hasRealEmail       Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tracker Tracker?
+}
+
+model Tracker {
+  id            String   @id @default(uuid()) @db.Uuid
+  profileId     String   @unique @db.Uuid
+  name          String   @default("Intersearch")
+  activeConfig  Json?
+  configHash    String?
+  comparisonKey String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  profile       Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  companies     CompanySource[]
+  runs          Run[]
+  documents     SourceDocument[]
+  opportunities Opportunity[]
+}
+
+model CompanySource {
+  id              String    @id @default(uuid()) @db.Uuid
+  trackerId       String    @db.Uuid
+  key             String
+  companyName     String
+  careersUrl      String
+  adapter         String
+  boardToken      String?
+  allowedHosts    Json
+  permissionNotes String?
+  verifiedAt      DateTime?
+  enabled         Boolean   @default(true)
+
+  tracker       Tracker       @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  opportunities Opportunity[]
+
+  @@unique([trackerId, key])
+}
+
+model Run {
+  id             String    @id @default(uuid()) @db.Uuid
+  trackerId      String    @db.Uuid
+  idempotencyKey String
+  status         RunStatus @default(running)
+  startedAt      DateTime  @default(now())
+  lastEventAt    DateTime  @default(now())
+  finishedAt     DateTime?
+  configSnapshot Json
+  configHash     String
+  comparisonKey  String
+  baselineRunId  String?   @db.Uuid
+  stopReason     String?
+  partial        Boolean   @default(false)
+  budgetTotals   Json?
+  errorCode      String?
+
+  tracker       Tracker                  @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  baseline      Run?                     @relation("RunBaseline", fields: [baselineRunId], references: [id], onDelete: SetNull)
+  comparedBy    Run[]                    @relation("RunBaseline")
+  fetchAttempts FetchAttempt[]
+  observations  OpportunityObservation[]
+  traceEvents   TraceEvent[]
+  report        Report?
+
+  @@unique([trackerId, idempotencyKey])
+  @@index([trackerId, startedAt(sort: Desc)])
+}
+
+// Versioned: a changed page gets a new row (new contentHash) instead of overwriting old evidence.
+model SourceDocument {
+  id           String   @id @default(uuid()) @db.Uuid
+  trackerId    String   @db.Uuid
+  canonicalUrl String
+  finalUrl     String
+  sourceKind   String
+  title        String?
+  text         String
+  contentHash  String
+  httpStatus   Int
+  metadata     Json?
+  fetchedAt    DateTime @default(now())
+
+  tracker       Tracker             @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  fetchAttempts FetchAttempt[]
+  opportunities OpportunitySource[]
+
+  @@unique([trackerId, canonicalUrl, contentHash])
+  @@index([trackerId, canonicalUrl])
+}
+
+// Every fetch_article call on a run, including cache hits and guardrail rejections.
+model FetchAttempt {
+  id               String      @id @default(uuid()) @db.Uuid
+  runId            String      @db.Uuid
+  eventId          String
+  requestedUrl     String
+  canonicalUrl     String?
+  sourceDocumentId String?     @db.Uuid
+  status           FetchStatus
+  reason           String?
+  title            String?
+  attemptedAt      DateTime    @default(now())
+  latencyMs        Int?
+  bytes            Int?
+  retryCount       Int         @default(0)
+
+  run            Run             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  sourceDocument SourceDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, eventId])
+  @@index([runId, attemptedAt])
+}
+
+// One real internship, however many URLs describe it.
+model Opportunity {
+  id              String    @id @default(uuid()) @db.Uuid
+  trackerId       String    @db.Uuid
+  identityKey     String
+  companySourceId String?   @db.Uuid
+  companyName     String
+  provider        String?
+  providerJobId   String?
+  internalJobId   String?
+  title           String
+  normalizedTitle String
+  locationKey     String?
+  season          String?
+  applicationUrl  String?
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  firstReportedAt DateTime?
+
+  tracker       Tracker                  @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  companySource CompanySource?           @relation(fields: [companySourceId], references: [id], onDelete: SetNull)
+  sources       OpportunitySource[]
+  observations  OpportunityObservation[]
+  reportItems   ReportItem[]
+
+  @@unique([trackerId, identityKey])
+}
+
+// Facts as seen on one run, so old reports never change when a posting does.
+model OpportunityObservation {
+  id                 String   @id @default(uuid()) @db.Uuid
+  runId              String   @db.Uuid
+  opportunityId      String   @db.Uuid
+  extractedFacts     Json
+  evidenceReferences Json
+  observedAt         DateTime @default(now())
+
+  run         Run         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, opportunityId])
+}
+
+model OpportunitySource {
+  opportunityId    String @db.Uuid
+  sourceDocumentId String @db.Uuid
+  relation         String
+  dedupeMethod     String
+  confidence       Float
+
+  opportunity    Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceDocument SourceDocument @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+
+  @@id([opportunityId, sourceDocumentId])
+}
+
+model Report {
+  id                    String    @id @default(uuid()) @db.Uuid
+  runId                 String    @unique @db.Uuid
+  schemaVersion         Int       @default(1)
+  status                RunStatus
+  createdAt             DateTime  @default(now())
+  reportJson            Json
+  markdown              String
+  previousCompleteRunId String?   @db.Uuid
+
+  run   Run          @relation(fields: [runId], references: [id], onDelete: Cascade)
+  items ReportItem[]
+}
+
+model ReportItem {
+  id                 String        @id @default(uuid()) @db.Uuid
+  reportId           String        @db.Uuid
+  opportunityId      String        @db.Uuid
+  rank               Int?
+  section            ReportSection
+  score              Float
+  scoreBreakdown     Json
+  summary            String
+  evidenceReferences Json
+
+  report      Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, opportunityId])
+}
+
+model TraceEvent {
+  id                String   @id @default(uuid()) @db.Uuid
+  runId             String   @db.Uuid
+  eventId           String
+  parentEventId     String?
+  step              Int
+  category          String
+  service           String?
+  tool              String?
+  argumentsRedacted Json?
+  status            String
+  startedAt         DateTime
+  latencyMs         Int?
+  inputTokens       Int?
+  outputTokens      Int?
+  searchCredits     Float?
+  estimatedCost     Float?
+  errorCode         String?
+  detail            Json?
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, eventId])
+  @@index([runId, step])
+}

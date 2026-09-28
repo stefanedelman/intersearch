@@ -1,0 +1,14 @@
+-- Block Supabase Data API (anon/authenticated roles) from app tables. Express, connecting as the
+-- table owner, bypasses RLS; with no policies, browser keys can read nothing.
+ALTER TABLE "Profile" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Tracker" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CompanySource" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Run" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "SourceDocument" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "FetchAttempt" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Opportunity" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "OpportunityObservation" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "OpportunitySource" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Report" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ReportItem" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "TraceEvent" ENABLE ROW LEVEL SECURITY;

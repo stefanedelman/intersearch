@@ -1,0 +1,36 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# Generated Prisma client
+backend/src/generated/
+
+# Environment files: only the committed course env and examples are allowed
+.env*
+*.local
+!.env.example
+!backend/.env
+!backend/.env.example
+!frontend/.env.example
+
+# Local tracker artifacts (exported evidence lives in reports/ and traces/)
+runs/
+*.checkpoint.json
+
+# Hosting and tooling
+.vercel/
+.DS_Store
+*.log
+tmp/
+.tmp/
+
+# Python wrapper caches
+__pycache__/
+*.pyc
+
+# Local editor/agent tooling
+.claude/

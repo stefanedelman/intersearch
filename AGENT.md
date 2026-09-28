@@ -1,0 +1,166 @@
+# AGENT.md — how the Intersearch tracker works
+
+> **Status:** Sections 1, 3, and 4 describe the implemented code. Sections 2 and 5 need numbers measured from the genuine run-1 trace. Items marked **[measure]** get filled in after `npm run tracker:run` with real keys, using `node scripts/trace-stats.mjs traces/run1.jsonl`.
+
+The tracker runs this loop: `list_company_jobs` → `fetch_article` → observe → decide → `finish`. It remembers state across runs through our Express API.
+
+- Loop: [`backend/src/tracker/loop.ts`](backend/src/tracker/loop.ts)
+- Tools: [`backend/src/tracker/tools/`](backend/src/tracker/tools)
+- Report building: [`backend/src/tracker/finalize.ts`](backend/src/tracker/finalize.ts) and [`backend/src/tracker/domain/`](backend/src/tracker/domain)
+
+## 1. Workflow vs. agent
+
+**The model decides:**
+
+- which companies' job feeds to read, and in what order (`list_company_jobs`);
+- which postings are worth fetching, and whether to search for postings the feeds miss (`search_web`);
+- when it has enough evidence to stop (`finish`);
+- an optional one-line "why it fits" note per posting. The note must come with a quote copied from the posting; code drops any note whose quote is not in the source.
+
+**Code decides everything else:**
+
+- **Which tools exist, their arguments, and which hosts are reachable.** A frozen registry with Zod schemas (`tools/registry.ts`) and the URL/DNS guardrails (`fetch/url-policy.ts`, `fetch/dns.ts`, `fetch/transport.ts`).
+- **Every budget.** `budget.ts` is checked before each model call, tool call, fetch, and search.
+- **Retry versus stop.** `failure.ts`.
+- **The facts.** Title, locations, season, skills, pay, and eligibility are extracted by code as verbatim quotes (`domain/facts.ts`).
+- **Whether two pages are the same internship.** `domain/normalize.ts` `identityFor`.
+- **The score and the ranking.** `domain/rank.ts` `scoreFacts`: role 35, season 25, location 20, skills 15, freshness 5, plus hard exclusions.
+- **The report sections.** New / Still / Returned / Dropped, in `domain/report.ts` `buildReport`.
+
+**Decisions moved out of the model:** ranking and fact extraction.
+
+An early design had the model propose facts and a ranked list inside `finish`. We moved both into code for three reasons:
+
+- **Provenance.** A claim that is not in the cited source counts as a hallucination. Code-extracted facts are exact substrings of the stored page, so they cannot be invented. The API re-checks every quote against the stored text at `finalize` and rejects the report otherwise.
+- **Stable comparisons across runs.** New/Still/Dropped only means something if the same posting gets the same score on both days. A temperature-0 model is still not guaranteed to rank identically day to day; `scoreFacts` is.
+- **Tokens.** The model only sees short extracted facts and a 700-character excerpt per page, not whole postings.
+
+The model still does real agent work. It chooses what to read under a fetch budget, and a poor choice means worse evidence in the report.
+
+## 2. The network
+
+**[measure]** Fill this in from `node scripts/trace-stats.mjs traces/run1.jsonl`.
+
+- **Counting rule:** every `model`, `http`, and `api` trace event is exactly one HTTP round trip. `tool` events wrap the round trips they caused (linked by `parentEventId`) and are not counted again.
+- **Retries and redirects:** each retry is its own event. Redirect hops are counted in the fetch event's `detail.redirects` and charged to `max_network_requests`.
+- **Cache hits:** these are `skipped_seen` fetch attempts. They make no request to the source site, only one round trip to our own API to load the saved text.
+
+| Service | Round trips (run 1) | Total time | Median | Notes |
+| --- | --- | --- | --- | --- |
+| `api.groq.com` (model) | [measure] | [measure] | [measure] | one per loop step; includes retries after per-minute 429s |
+| `boards-api.greenhouse.io` (feeds and postings) | [measure] | | | 5 feeds + fetched postings |
+| careers sites / `job-boards.greenhouse.io` | [measure] | | | redirects counted separately |
+| `api.tavily.com` (search) | [measure] | | | 1 credit each |
+| `intersearch-api` (our backend) | [measure] | | | login, config import, run start, state, checkpoints, finalize |
+
+**Where the time went:** [measure]. Our expectation, to confirm against the trace:
+
+- Model calls dominate wall time: the loop runs one call per step, and each call re-sends the conversation.
+- Waits after per-minute rate limits show up as `budget`/`retry` events.
+- Fetches of Greenhouse JSON took about 100–170 ms each in development.
+
+The calls are sequential, so wall time is roughly the sum of the round-trip latencies plus any retry waits.
+
+## 3. "New": when are two articles the same development?
+
+Identity is computed in code (`identityFor` in `domain/normalize.ts`), strongest evidence first:
+
+1. **Company + the provider's job id.** Greenhouse ids come from the job-board JSON, from a board URL (`/jobs/8128745`), or from `gh_jid=` on a company careers-site URL. The API record, the board page, and the careers-site page of one posting all become `greenhouse:stripe:8128745`.
+2. **Fallback: company + normalized title + normalized location + season,** used when no id is available.
+
+**URL canonicalization** removes tracking parameters (`utm_*`, `gh_src`, `ref`, ...) but keeps identity-bearing ones (`gh_jid`).
+
+**Classifying each posting in the current top K:**
+
+- **New:** its identity has never appeared in a completed run's report.
+- **Still:** it was in the baseline run's top K.
+- **Returned:** reported before, but not in the baseline run.
+
+**Other rules:**
+
+- A new URL for an already-known identity adds a source to that development instead of creating a new one. This is tested in `tests/integration/tracker-e2e.test.ts`, run 2.
+- A partial run never becomes the baseline.
+
+**One case the method gets wrong:** a company reposts the same internship under a new job id, for example after closing and reopening the requisition. Intersearch reports the repost as **New**, and the old id as **Dropped** once it leaves the feed, even though a human would call it the same role.
+
+We accept that error rather than merging by title. Stripe lists *"Software Engineer, Intern"* under separate job ids for San Francisco/Seattle/New York, London, Toronto, Dublin, Singapore, Bengaluru, and Bucharest. A title-based merge would collapse genuinely different postings.
+
+## 4. Failure: a 429 comes back
+
+A 429 is classified before anything is retried. From [`backend/src/tracker/failure.ts`](backend/src/tracker/failure.ts) (`classifyHttpFailure`):
+
+```ts
+if (status === 429) {
+	if (/per day|\(TPD\)|\(RPD\)|daily|quota|per month|monthly|usage limit|exceeded your current quota/i.test(text)) {
+		return new ProviderError(provider, "quota_exhausted", `${summary}: daily or monthly quota exhausted`, status, wait);
+	}
+	if (/per minute|\(TPM\)|\(RPM\)|per second|too many requests/i.test(text) || (wait !== undefined && wait <= 60_000)) {
+		return new ProviderError(provider, "rate_limit_minute", `${summary}: per-minute rate limit`, status, wait ?? 10_000);
+	}
+	return new ProviderError(provider, "rate_limit_unknown", `${summary}: rate limited, and the response does not say whether the limit is per minute or per day`, status, wait);
+}
+```
+
+The retry wrapper that every provider call goes through (`withRetries`):
+
+```ts
+if (error.terminal) throw error; // quota, auth, payment, permission, unknown 429, bad request
+if (attemptNumber >= maxRetries) throw error;
+
+const backoff = 1000 * 2 ** attemptNumber + Math.floor(Math.random() * 400);
+const waitMs = error.failure === "rate_limit_minute" ? Math.max(error.retryAfterMs ?? 10_000, 500) : backoff;
+if (waitMs > 60_000 || waitMs >= budget.remainingMs() - 1000) {
+	throw new ProviderError(error.provider, error.failure, `${error.message}; waiting ${Math.round(waitMs / 1000)}s would exceed the run's time budget`, error.status, error.retryAfterMs);
+}
+```
+
+**Per-minute limit** (Groq's "tokens per minute (TPM)" message, or a short Retry-After):
+
+- The run waits for the time the provider asks for. It reads the `retry-after` header, or Groq's "try again in 7.5s" text.
+- It then retries, up to `max_retries` (2).
+- It only waits if the wait fits in the remaining `max_elapsed_seconds` and is at most 60 s. Otherwise it stops with a partial report.
+- Every retry is a new budgeted attempt, and each appears in the trace as a `budget`/`retry` event.
+
+**Daily cap** (Groq's "tokens per day (TPD)" or "requests per day (RPD)", or Tavily's 432/433 plan limit):
+
+- `quota_exhausted` is terminal. The run stops at once with status **failed** and a clear stop reason, and never retries.
+- Retrying a daily quota would only burn time and requests until the quota resets.
+- The report built from evidence gathered so far is still saved.
+
+**A 429 we can't classify** (`rate_limit_unknown`) is treated as terminal too: stopping safely beats guessing.
+
+**Other failures:**
+
+- **Bad key:** Groq or Tavily returns 401, which is terminal. The run makes one attempt, then stops as failed with "the API key is missing or invalid". The SDK's own hidden retries are disabled (`maxRetries: 0`), so our wrapper sees every attempt.
+- **Network cut:** timeouts and connection errors are `transient`. Each retries with jittered backoff (1 s, 2 s), then the run stops as partial. The report and trace are written to `runs/<runId>/` before any upload is attempted. If the backend or database is unreachable too, the CLI says so and exits 1. `npm run tracker:sync -- --run <id>` uploads it later.
+
+These paths are covered by tests in `tests/integration/tracker-e2e.test.ts` and `tests/unit/domain.test.ts`.
+
+## 5. Budget: what does one run cost?
+
+**[measure]** Fill in from run 1's totals (the CLI summary, the run page on the dashboard, or `trace-stats`).
+
+| Resource | Per run (measured) | Configured cap per run | Provider free allowance |
+| --- | --- | --- | --- |
+| Groq model calls | [measure] | `max_model_calls: 16` | [verify on console.groq.com/docs/rate-limits for the configured model] requests/day |
+| Groq tokens (in + out) | [measure] | `max_total_tokens: 60000` | [verify] tokens/minute and tokens/day |
+| Tavily credits | [measure] | `max_search_credits: 4` | [verify on tavily.com] credits/month |
+| Greenhouse requests | [measure] | part of `max_network_requests: 60` | public API, no key |
+
+**Dollar cost:** $0 on the free tiers. The paid-equivalent cost is [measure] tokens × the model's published price (look it up on groq.com/pricing when filling this in).
+
+**Which free tier runs out first when run daily:** work it out separately for each limit.
+
+- **Daily limits reset each day,** so one run per day exhausts them only if a single run exceeds the daily cap. Compare measured tokens per run with the tokens/day and requests/day limits.
+- **A monthly allowance A** (Tavily credits) with measured consumption c per run supports `floor(A / c)` daily runs. The next run, on day `floor(A / c) + 1` of the cycle, would exceed it.
+- **The answer** is the smallest of these. [measure: name the provider and the day]
+
+## Security notes
+
+- **Untrusted web text:**
+  - Page text reaches the model only inside tool results, wrapped as `untrusted_web_data`. The system prompt says this text is data, not instructions.
+  - This is backed by code: the model cannot add tools or hosts or change limits. Injected instructions to fetch a private address are refused by the guardrail before any request is made. The test "run 1" feeds a prompt-injection page and checks both.
+  - The dashboard renders all web-derived text with Vue interpolation. There is no `v-html`, and links are rendered only for http(s) URLs.
+- **Secrets:**
+  - Model and search keys come from `backend/.env.local` and are sent only to their providers' fixed URLs.
+  - Trace arguments and details are redacted: keys, tokens, JWTs, and connection strings.

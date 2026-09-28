@@ -1,0 +1,65 @@
+import Groq from "groq-sdk";
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "groq-sdk/resources/chat/completions";
+import { classifyHttpFailure, classifyNetworkFailure, ProviderError } from "../failure";
+
+export type ModelMessage = ChatCompletionMessageParam;
+export type ModelTool = ChatCompletionTool;
+
+export type ModelResponse = {
+	content: string | null;
+	toolCalls: { id: string; name: string; arguments: string }[];
+	usage: { input: number; output: number } | null;
+	finishReason: string | null;
+	requestId: string | null;
+};
+
+/**
+ * One model request, no hidden retries: the SDK's own retry loop is disabled so our wrapper
+ * counts and classifies every attempt. The model only proposes tool calls; our loop runs them.
+ */
+export function createGroqModel(apiKey: string | undefined, timeoutMs: number) {
+	if (!apiKey) {
+		throw new ProviderError("groq", "auth", "GROQ_API_KEY is not set. Add it to backend/.env.local (see README).");
+	}
+	const client = new Groq({ apiKey, maxRetries: 0, timeout: timeoutMs * 2 });
+
+	return async function callModel(input: {
+		model: string;
+		messages: ModelMessage[];
+		tools: ModelTool[];
+		temperature: number;
+		maxOutputTokens: number;
+	}): Promise<ModelResponse> {
+		try {
+			const { data, response } = await client.chat.completions
+				.create({
+					model: input.model,
+					messages: input.messages,
+					tools: input.tools,
+					tool_choice: "auto",
+					parallel_tool_calls: false,
+					temperature: input.temperature,
+					max_completion_tokens: input.maxOutputTokens,
+				})
+				.withResponse();
+			const choice = data.choices[0];
+			return {
+				content: choice?.message.content ?? null,
+				toolCalls: (choice?.message.tool_calls ?? []).map((call) => ({ id: call.id, name: call.function.name, arguments: call.function.arguments })),
+				usage: data.usage ? { input: data.usage.prompt_tokens ?? 0, output: data.usage.completion_tokens ?? 0 } : null,
+				finishReason: choice?.finish_reason ?? null,
+				requestId: response.headers.get("x-request-id"),
+			};
+		} catch (error) {
+			if (error instanceof Groq.APIConnectionError || error instanceof Groq.APIConnectionTimeoutError) {
+				throw classifyNetworkFailure("groq", error);
+			}
+			if (error instanceof Groq.APIError && typeof error.status === "number") {
+				throw classifyHttpFailure({ provider: "groq", status: error.status, headers: error.headers, body: `${JSON.stringify(error.error ?? {})} ${error.message}` });
+			}
+			throw classifyNetworkFailure("groq", error);
+		}
+	};
+}
+
+export type CallModel = ReturnType<typeof createGroqModel>;

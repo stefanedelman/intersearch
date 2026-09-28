@@ -1,0 +1,27 @@
+{
+  "name": "intersearch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal internship research dashboard and tracker agent (NYU FNMS A1 + A1B)",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "setup": "npm ci --prefix backend && npm ci --prefix frontend && npm run prisma:generate --prefix backend && node scripts/setup-env.mjs",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "db:migrate": "npm run db:migrate --prefix backend",
+    "db:seed": "npm run db:seed --prefix backend",
+    "tracker:config": "npm run tracker --prefix backend -- config",
+    "tracker:run": "npm run tracker --prefix backend -- run",
+    "tracker:sync": "npm run tracker --prefix backend -- sync",
+    "tracker:export": "npm run tracker --prefix backend -- export",
+    "tracker:reset": "npm run tracker --prefix backend -- reset",
+    "tracker:tools": "npm run tools --silent --prefix backend --",
+    "test:unit": "npm run test:unit --prefix backend",
+    "test:integration": "npm run test:integration --prefix backend",
+    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend",
+    "build": "npm run build --prefix backend && npm run build --prefix frontend",
+    "verify": "node scripts/verify.mjs"
+  }
+}
