@@ -18,8 +18,7 @@ export function authRouter(authService: AuthService, requireAuth: RequestHandler
 	});
 
 	router.get("/me", requireAuth, async (req, res) => {
-		const { userId, email } = authOf(req);
-		res.json({ user: await authService.getUser(userId, email) });
+		res.json({ user: await authService.getUser(authOf(req).userId) });
 	});
 
 	return router;

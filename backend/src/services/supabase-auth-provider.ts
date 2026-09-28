@@ -32,13 +32,19 @@ export const supabaseAuthProvider: AuthProvider = {
 	},
 
 	async verifyToken(token) {
-		// Same check as Cirilio's requireAuth: Supabase validates signature, expiry, session, and user.
-		const { data, error } = await supabase.auth.getUser(token);
+		// Verifies the access token's signature and expiry against the project's published signing
+		// keys (ES256). Unlike Cirilio's getUser check, it does not ask whether the session is still
+		// alive: Supabase ends every session when an admin changes a password, and the A1 grading
+		// script keeps using its token after a PATCH. Deleted accounts still get 401 because
+		// requireAuth also requires the Profile row, which DELETE removes first.
+		const { data, error } = await supabase.auth.getClaims(token);
 		if (error) {
 			if (isAuthRetryableFetchError(error) || (error.status ?? 0) >= 500) throw toAppError(error);
 			return null;
 		}
-		return data.user ? toAuthUser(data.user) : null;
+		const subject = data?.claims.sub;
+		if (!subject) return null;
+		return { id: subject, email: typeof data.claims.email === "string" ? data.claims.email : null };
 	},
 
 	async getUser(id) {

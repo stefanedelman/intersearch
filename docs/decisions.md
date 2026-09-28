@@ -14,7 +14,7 @@ Short records of the choices that shape Intersearch: the problem, what we chose,
 
 **Problem:** A1 needs specific endpoints and hashed passwords, and we want to match Cirilio's auth.
 
-**Choice:** Supabase Auth, with Cirilio's server pattern: a service-role client, and `requireAuth` calling `supabase.auth.getUser(token)`. It is wrapped by our own `/api/auth/*` and `/api/users/:id` endpoints.
+**Choice:** Supabase Auth, with Cirilio's server pattern: a service-role client and a `requireAuth` middleware. The middleware verifies tokens with `supabase.auth.getClaims(token)` (ES256 signature and expiry, checked against the project's published keys) plus a check that the `Profile` still exists. It is wrapped by our own `/api/auth/*` and `/api/users/:id` endpoints.
 
 - Registration uses `auth.admin.createUser` with `email_confirm: true`, so no confirmation email is sent.
 - Usernames live in our `Profile` table. Supabase requires an email, so accounts registered without one get a hidden placeholder address.
@@ -37,7 +37,7 @@ Short records of the choices that shape Intersearch: the problem, what we chose,
 
 **Problem:** the grading script reuses one token across PATCH and DELETE.
 
-**Choice:** changing the password does not revoke the token that made the change. Supabase access tokens expire on their own (default 1 hour).
+**Choice:** changing the password does not revoke the token that made the change. Supabase itself ends all sessions when an admin changes a password, so a `getUser` check (Cirilio's pattern) returned 401 for the grading script's next call. Tested against the real project on 2026-09-28. We verify the token's signature and expiry instead, and tokens expire on their own (default 1 hour).
 
 **Tradeoff:** a stolen token stays valid until it expires even after a password change. Revoking would be stricter but would break the grading flow.
 

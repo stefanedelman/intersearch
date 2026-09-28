@@ -20,14 +20,14 @@ export function usersRouter(authService: AuthService, requireAuth: RequestHandle
 	router.use(requireAuth);
 
 	router.get("/:id", async (req, res) => {
-		const { userId, email } = ownAccount(req);
-		res.json({ user: await authService.getUser(userId, email) });
+		const { userId } = ownAccount(req);
+		res.json({ user: await authService.getUser(userId) });
 	});
 
 	router.patch("/:id", async (req, res) => {
-		const { userId, email } = ownAccount(req);
+		const { userId } = ownAccount(req);
 		const body = parseBody(updateUserBodySchema, req.body);
-		res.json({ user: await authService.updateUser(userId, email, body) });
+		res.json({ user: await authService.updateUser(userId, body) });
 	});
 
 	router.delete("/:id", async (req, res) => {

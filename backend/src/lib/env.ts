@@ -44,6 +44,7 @@ let cached: ServerEnv | undefined;
 export function serverEnv(): ServerEnv {
 	if (cached) return cached;
 	const placeholders = ["DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"].filter((key) => process.env[key]?.startsWith("REPLACE_WITH_"));
+	for (const key of ["DATABASE_URL", "DIRECT_URL"]) if (process.env[key]?.includes("[YOUR-PASSWORD]")) placeholders.push(`${key} ([YOUR-PASSWORD])`);
 	if (placeholders.length) {
 		throw new Error(`backend/.env still has placeholder values for ${placeholders.join(", ")}. Fill them in from the course Supabase project (README: "Supabase setup").`);
 	}

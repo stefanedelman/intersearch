@@ -42,6 +42,12 @@ export function createAuthService(provider: AuthProvider) {
 		return profile;
 	}
 
+	/** The email on file in Supabase Auth; a token's email claim can be older than a PATCH. */
+	async function currentEmail(profile: Profile): Promise<string | null> {
+		if (!profile.hasRealEmail) return null;
+		return (await provider.getUser(profile.id))?.email ?? null;
+	}
+
 	async function signInOrFail(email: string, password: string) {
 		const session = await provider.signIn(email, password);
 		if (!session) throw invalidCredentials();
@@ -109,11 +115,12 @@ export function createAuthService(provider: AuthProvider) {
 			return { token: session.accessToken, expiresAt: session.expiresAt, user: toUserDto(profile, email) };
 		},
 
-		async getUser(id: string, authEmail: string | null) {
-			return toUserDto(await requireProfile(id), authEmail);
+		async getUser(id: string) {
+			const profile = await requireProfile(id);
+			return toUserDto(profile, await currentEmail(profile));
 		},
 
-		async updateUser(id: string, authEmail: string | null, body: UpdateUserBody) {
+		async updateUser(id: string, body: UpdateUserBody) {
 			const profile = await requireProfile(id);
 			const normalizedUsername = body.username ? normalizeUsername(body.username) : undefined;
 
@@ -136,7 +143,7 @@ export function createAuthService(provider: AuthProvider) {
 						updatedAt: new Date(),
 					},
 				});
-				return toUserDto(updated, body.email ?? authEmail);
+				return toUserDto(updated, body.email ?? (await currentEmail(updated)));
 			} catch (error) {
 				if (isUniqueViolation(error)) throw errors.conflict("USERNAME_TAKEN", "That username is already taken.");
 				throw error;

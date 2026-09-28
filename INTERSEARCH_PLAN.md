@@ -22,7 +22,7 @@ Intended GitHub repository name: `intersearch`
 **Blocked on the user:**
 
 - **Step 01:** private repo created at `github.com/stefanedelman/intersearch` (personal account for now; transfer to the class org once known). Adding `origin` and pushing are left to the user.
-- **Step 04:** Supabase project `intersearch` (ref `pacntntiigmpyaipxpwj`, East US, Data API off) created in org "Stefan"; `SUPABASE_URL` filled in. The user still pastes `DATABASE_URL`, `DIRECT_URL`, and `SUPABASE_SERVICE_ROLE_KEY` into `backend/.env`, then runs `npm run db:migrate` and `npm run db:seed`, and verifies the Step 08 token-survival assumption against real Supabase Auth.
+- **Step 04 (done 2026-09-28):** Supabase project `intersearch` (ref `pacntntiigmpyaipxpwj`, East US, Data API off) in org "Stefan"; `backend/.env` filled; migrations applied; `NYUgrader` seeded. `npm run verify` passes 29/29 against real Supabase Auth, after switching token checks from `getUser` to `getClaims` (Supabase revokes sessions on an admin password change).
 - **Step 12:** Groq and Tavily keys in `backend/.env.local`, with spend caps (`docs/costs.md`).
 - **Steps 35 and 37:** genuine runs as `NYUgrader`, at least 24 hours apart, then `tracker:export`.
 - **Step 38:** measured numbers in AGENT.md sections 2 and 5, and the journal in your own voice.
@@ -143,7 +143,7 @@ The required A1 endpoints still live in our Express API; they wrap Supabase Auth
 
 - **Register** calls `supabase.auth.admin.createUser({ email, password, email_confirm: true })`. The admin API creates a confirmed user and sends no email, so no email-confirmation dashboard setting is needed. It then creates a `Profile` row holding the username, and signs in to return a token.
 - **Login** looks up the username in `Profile` to find the account's auth email, then calls `signInWithPassword` on a short-lived client created with `persistSession: false` and `autoRefreshToken: false`, so sessions never leak between requests. The Supabase access token is returned as our bearer token.
-- **Middleware** uses `getUser(token)` exactly like Cirilio. It asks Supabase to validate the token, so expired tokens and tokens of deleted users both fail and become 401. If Supabase itself is unreachable, return 503, not 401.
+- **Middleware** verifies the token with `getClaims(token)` (ES256 signature and expiry, against the project's published keys) and requires the `Profile` row, so expired tokens and tokens of deleted users both fail and become 401. (Cirilio's `getUser` check was tried first; real Supabase ends sessions on an admin password change, which broke the grading flow.) If Supabase itself is unreachable, return 503, not 401.
 - **PATCH** uses `supabase.auth.admin.updateUserById` for email and password. The admin API skips confirmation emails and the "recent login" requirement.
 - **DELETE** removes app data and the `Profile` row, then calls `supabase.auth.admin.deleteUser`.
 
@@ -342,7 +342,7 @@ Disable the Supabase Data API for these app tables, or isolate them in a non-exp
 ### Common rules
 
 - JSON request/response bodies. `Authorization: Bearer <token>` on protected endpoints.
-- Missing, invalid, expired, or deleted-user tokens: 401, determined by `supabase.auth.getUser(token)`. Supabase unreachable: 503, never 401 or 200.
+- Missing, invalid, expired, or deleted-user tokens: 401, determined by `supabase.auth.getClaims(token)` plus the `Profile` check. Supabase unreachable: 503, never 401 or 200.
 - Other user's resources: consistently 404, which avoids confirming the resource exists. **Why 404 rather than 403:** a 403 tells a caller that the id belongs to a real account, which lets an attacker enumerate users. A 404 gives the same answer whether the account exists or not. This rationale goes in the README and journal, as A1 requires.
 - Check order on every `:id` route: authentication (401) → ownership and existence (404) → body validation (400). A malformed or non-UUID `:id` returns 404, never 400 or 500. Another user's id with an invalid PATCH body still returns 404.
 - Validation failure: 400. Duplicate username or email: 409. Conflicting run state: 409. Oversized body: 413. Unexpected failure: sanitized 500.
