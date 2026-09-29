@@ -8,6 +8,7 @@ const props = defineProps<{ item: ReportItem }>();
 const showEvidence = ref(false);
 
 const sectionLabel = computed(() => ({ new: "New", still: "Still in top K", returned: "Returned" })[props.item.section]);
+const rank = computed(() => String(props.item.rank).padStart(2, "0"));
 const applyHref = computed(() => safeHref(props.item.applicationUrl));
 const bars = computed(() => [
 	{ label: "Role", value: props.item.breakdown.role, max: 35 },
@@ -17,67 +18,76 @@ const bars = computed(() => [
 	{ label: "Fresh", value: props.item.breakdown.freshness, max: 5 },
 ]);
 const factEvidence = computed(() => props.item.evidence.filter((evidence) => evidence.field !== "highlight"));
+
+function hostOf(url: string) {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return url;
+	}
+}
 </script>
 
 <template>
-	<article class="card card-compact opportunity">
+	<article class="card opportunity">
 		<header class="head">
-			<div class="rank" :aria-label="`Rank ${item.rank}`">#{{ item.rank }}</div>
+			<span class="rank mono" :aria-label="`Rank ${item.rank}`">{{ rank }}</span>
 			<div class="titles">
-				<div class="row">
+				<div class="row tags">
 					<span :class="['badge', `badge-${item.section}`]">{{ sectionLabel }}</span>
 					<span v-if="!item.reverified" class="badge badge-warn" title="Not re-fetched this run">Not re-verified</span>
 				</div>
 				<h3>{{ item.title }}</h3>
-				<p class="muted company">
-					{{ item.company ?? "Unknown company" }}<span v-if="item.locations.length"> · {{ item.locations.join(" · ") }}</span>
+				<p class="company">
+					<span class="company-name">{{ item.company ?? "Unknown company" }}</span>
+					<span v-for="location in item.locations" :key="location" class="loc">{{ location }}</span>
 				</p>
 			</div>
 			<div class="score" :title="`Score ${item.score} of 100`">
 				<span class="score-value">{{ Math.round(item.score) }}</span>
-				<span class="subtle">/ 100</span>
+				<span class="score-max mono">/100</span>
 			</div>
 		</header>
 
 		<p class="summary">{{ item.summary }}</p>
-		<p class="fit"><strong>Fit:</strong> {{ item.fit }}</p>
+
+		<div class="meter" aria-label="Score breakdown">
+			<div v-for="bar in bars" :key="bar.label" class="meter-cell" :title="`${bar.label}: ${bar.value} of ${bar.max}`" :style="{ flexGrow: bar.max }">
+				<span class="meter-track"><span class="meter-fill" :style="{ width: `${(bar.value / bar.max) * 100}%` }"></span></span>
+				<span class="meter-label mono">{{ bar.label }} <b>{{ bar.value }}</b></span>
+			</div>
+		</div>
+
+		<p class="fit">{{ item.fit }}</p>
 
 		<blockquote v-if="item.agentNote" class="note">
-			<span class="note-label">Agent's note</span>
-			{{ item.agentNote.reason }}
-			<span class="subtle">— quoted: “{{ item.agentNote.quote }}”</span>
+			<span class="eyebrow">Agent's note</span>
+			<span>{{ item.agentNote.reason }}</span>
+			<span class="quote">“{{ item.agentNote.quote }}”</span>
 		</blockquote>
 
 		<ul v-if="item.highlights.length" class="highlights">
-			<li v-for="highlight in item.highlights" :key="highlight">“{{ highlight }}”</li>
+			<li v-for="highlight in item.highlights" :key="highlight">{{ highlight }}</li>
 		</ul>
-
-		<div class="breakdown" aria-label="Score breakdown">
-			<div v-for="bar in bars" :key="bar.label" class="bar">
-				<span class="bar-label">{{ bar.label }}</span>
-				<span class="bar-track"><span class="bar-fill" :style="{ width: `${(bar.value / bar.max) * 100}%` }"></span></span>
-				<span class="bar-value">{{ bar.value }}</span>
-			</div>
-		</div>
 
 		<p v-if="item.unknowns.length" class="subtle">Not stated in the posting: {{ item.unknowns.join(", ") }}.</p>
 		<p v-for="note in item.notes" :key="note" class="subtle">{{ note }}</p>
 
 		<footer class="foot">
 			<div class="sources">
-				<span class="subtle">Sources:</span>
+				<span class="eyebrow">Sources</span>
 				<template v-for="source in item.sources" :key="source.sourceDocumentId">
-					<a v-if="safeHref(source.url)" :href="safeHref(source.url)!" target="_blank" rel="noopener noreferrer" class="source-link" :title="`Fetched ${formatDateTime(source.fetchedAt)}`">
-						{{ source.title ?? source.url }}
+					<a v-if="safeHref(source.url)" :href="safeHref(source.url)!" target="_blank" rel="noopener noreferrer" class="source mono" :title="`${source.title ?? source.url} · fetched ${formatDateTime(source.fetchedAt)}`">
+						{{ hostOf(source.url) }}
 					</a>
-					<span v-else class="source-link">{{ source.url }}</span>
+					<span v-else class="source mono">{{ source.url }}</span>
 				</template>
 			</div>
 			<div class="row">
-				<button type="button" class="btn-link" :aria-expanded="showEvidence" @click="showEvidence = !showEvidence">
-					{{ showEvidence ? "Hide evidence" : "Show evidence" }}
+				<button type="button" class="btn btn-ghost btn-sm" :aria-expanded="showEvidence" @click="showEvidence = !showEvidence">
+					{{ showEvidence ? "Hide evidence" : "Evidence" }}
 				</button>
-				<a v-if="applyHref" :href="applyHref" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">Open posting</a>
+				<a v-if="applyHref" :href="applyHref" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">Open posting ↗</a>
 			</div>
 		</footer>
 
@@ -85,7 +95,7 @@ const factEvidence = computed(() => props.item.evidence.filter((evidence) => evi
 			<p class="subtle">Each fact above is backed by an exact quote from a fetched source.</p>
 			<dl>
 				<template v-for="(evidence, index) in factEvidence" :key="index">
-					<dt>{{ evidence.field.replace("skill:", "skill: ") }}</dt>
+					<dt class="mono">{{ evidence.field.replace("skill:", "skill · ") }}</dt>
 					<dd>“{{ evidence.quote }}”</dd>
 				</template>
 			</dl>
@@ -95,117 +105,183 @@ const factEvidence = computed(() => props.item.evidence.filter((evidence) => evi
 
 <style scoped>
 .opportunity {
-	gap: var(--space-3);
+	gap: var(--space-4);
+}
+
+.opportunity:hover {
+	border-color: var(--border-strong);
 }
 
 .head {
 	display: grid;
 	grid-template-columns: auto 1fr auto;
-	gap: var(--space-3);
+	gap: var(--space-4);
 	align-items: start;
 }
 
 .rank {
-	font-size: 1.3rem;
-	font-weight: 700;
-	color: var(--accent);
-	min-width: 2.2rem;
+	font-size: 13px;
+	color: var(--text-subtle);
+	padding-top: 3px;
+	min-width: 1.6rem;
 }
 
 .titles {
 	display: grid;
-	gap: 4px;
+	gap: 8px;
 	min-width: 0;
 }
 
+.tags {
+	gap: 6px;
+}
+
 .titles h3 {
-	font-size: 1.05rem;
+	font-size: 17px;
+	font-weight: 600;
+	letter-spacing: -0.015em;
 	overflow-wrap: anywhere;
 }
 
 .company {
-	font-size: 0.9rem;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.company-name {
+	color: var(--text);
+	font-weight: 500;
+}
+
+.loc {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.loc::before {
+	content: "";
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--text-faint);
 }
 
 .score {
 	text-align: right;
-	line-height: 1.1;
+	line-height: 1;
 }
 
 .score-value {
 	display: block;
-	font-size: 1.5rem;
-	font-weight: 700;
+	font-family: var(--font-display);
+	font-size: 2.6rem;
+	background: var(--white-gradient);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
+.score-max {
+	font-size: 11px;
+	color: var(--text-subtle);
 }
 
 .summary {
-	font-size: 0.95rem;
+	font-size: 14.5px;
+	line-height: 1.65;
+	color: #d6d8d9;
+}
+
+.meter {
+	display: flex;
+	gap: 6px;
+}
+
+.meter-cell {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+	flex-basis: 0;
+}
+
+.meter-track {
+	height: 4px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.07);
+	overflow: hidden;
+}
+
+.meter-fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, rgba(255, 255, 255, 0.55), #ffffff);
+}
+
+.meter-label {
+	font-size: 10.5px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--text-subtle);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.meter-label b {
+	color: var(--text-muted);
+	font-weight: 500;
 }
 
 .fit {
-	font-size: 0.9rem;
+	font-size: 13px;
 	color: var(--text-muted);
 }
 
 .note {
 	margin: 0;
-	padding: var(--space-2) var(--space-3);
-	border-left: 3px solid var(--accent);
-	background: var(--accent-soft);
+	display: grid;
+	gap: 4px;
+	padding: var(--space-3) var(--space-4);
+	border-left: 1px solid var(--border-strong);
+	background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), transparent);
 	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-	font-size: 0.9rem;
+	font-size: 13.5px;
 }
 
-.note-label {
-	display: block;
-	font-size: 0.75rem;
-	font-weight: 650;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--accent-text);
+.quote {
+	color: var(--text-muted);
+	font-style: italic;
 }
 
 .highlights {
 	margin: 0;
-	padding-left: 1.1rem;
-	color: var(--text-muted);
-	font-size: 0.9rem;
+	padding: 0;
+	list-style: none;
 	display: grid;
-	gap: 4px;
-}
-
-.breakdown {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-	gap: 6px var(--space-4);
-}
-
-.bar {
-	display: grid;
-	grid-template-columns: 58px 1fr 30px;
-	align-items: center;
-	gap: var(--space-2);
-	font-size: 0.8rem;
+	gap: 8px;
+	font-size: 13.5px;
 	color: var(--text-muted);
 }
 
-.bar-track {
-	height: 6px;
-	background: var(--surface-muted);
-	border-radius: 999px;
-	overflow: hidden;
+.highlights li {
+	position: relative;
+	padding-left: 18px;
 }
 
-.bar-fill {
-	display: block;
-	height: 100%;
-	background: var(--accent);
-	border-radius: 999px;
-}
-
-.bar-value {
-	text-align: right;
-	font-variant-numeric: tabular-nums;
+.highlights li::before {
+	content: "";
+	position: absolute;
+	left: 2px;
+	top: 0.62em;
+	width: 8px;
+	height: 1px;
+	background: var(--text-faint);
 }
 
 .foot {
@@ -213,50 +289,70 @@ const factEvidence = computed(() => props.item.evidence.filter((evidence) => evi
 	flex-wrap: wrap;
 	justify-content: space-between;
 	align-items: center;
-	gap: var(--space-2);
+	gap: var(--space-3);
 	border-top: 1px solid var(--border);
-	padding-top: var(--space-3);
+	padding-top: var(--space-4);
 }
 
 .sources {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 4px var(--space-3);
-	align-items: baseline;
-	font-size: 0.85rem;
+	gap: 6px;
+	align-items: center;
 	min-width: 0;
 }
 
-.source-link {
-	overflow-wrap: anywhere;
+.sources .eyebrow {
+	margin-right: 4px;
 }
 
-.btn-sm {
-	padding: 5px 12px;
-	font-size: 0.86rem;
+.source {
+	display: inline-flex;
+	align-items: center;
+	height: 24px;
+	padding: 0 9px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-pill);
+	font-size: 11.5px;
+	color: var(--text-muted);
+	text-decoration: none;
+	overflow-wrap: anywhere;
+	transition: border-color 0.15s, color 0.15s;
+}
+
+a.source:hover {
+	color: var(--text);
+	border-color: var(--border-strong);
 }
 
 .evidence {
-	background: var(--surface-muted);
+	background: var(--surface-solid);
+	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	padding: var(--space-3);
-	font-size: 0.86rem;
+	padding: var(--space-4);
+	font-size: 13px;
+	display: grid;
+	gap: var(--space-3);
 }
 
 .evidence dl {
 	display: grid;
 	grid-template-columns: max-content 1fr;
-	gap: 6px var(--space-3);
-	margin: var(--space-2) 0 0;
+	gap: 8px var(--space-4);
+	margin: 0;
 }
 
 .evidence dt {
-	color: var(--text-muted);
-	font-weight: 560;
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--text-subtle);
+	padding-top: 2px;
 }
 
 .evidence dd {
 	margin: 0;
+	color: #d6d8d9;
 	overflow-wrap: anywhere;
 }
 
@@ -269,12 +365,30 @@ const factEvidence = computed(() => props.item.evidence.filter((evidence) => evi
 		grid-column: 2;
 		text-align: left;
 		display: flex;
-		gap: 4px;
 		align-items: baseline;
+		gap: 4px;
+	}
+
+	.score-value {
+		display: inline;
+		font-size: 2rem;
+	}
+
+	.meter {
+		flex-wrap: wrap;
+	}
+
+	.meter-cell {
+		flex-basis: 40%;
 	}
 
 	.evidence dl {
 		grid-template-columns: 1fr;
+		gap: 2px;
+	}
+
+	.evidence dd {
+		margin-bottom: var(--space-2);
 	}
 }
 </style>

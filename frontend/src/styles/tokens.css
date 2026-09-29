@@ -1,36 +1,46 @@
+/* Visual language adapted from resend.com: pure black, hairline translucent borders, glassy
+   surfaces, a serif display face with a fading white gradient, and tinted status pills. */
 :root {
-	--bg: #f7f5f0;
-	--surface: #ffffff;
-	--surface-muted: #f1eee7;
-	--border: #e3ddd2;
-	--border-strong: #cfc7b8;
-	--text: #1c2127;
-	--text-muted: #5a6370;
-	--text-subtle: #858c96;
+	color-scheme: dark;
 
-	--accent: #0e7490;
-	--accent-hover: #0b5d74;
-	--accent-soft: #e3f2f5;
-	--accent-text: #0b5568;
+	--bg: #000000;
+	--surface: rgba(255, 255, 255, 0.025);
+	--surface-hover: rgba(255, 255, 255, 0.045);
+	--surface-strong: rgba(255, 255, 255, 0.06);
+	--surface-solid: #0a0b0c;
+	--border: rgba(225, 242, 254, 0.1);
+	--border-strong: rgba(225, 242, 254, 0.18);
+	--border-focus: rgba(225, 242, 254, 0.42);
 
-	--new: #0f7a4a;
-	--new-soft: #e4f4ec;
-	--still: #1d4ed8;
-	--still-soft: #e6edfc;
-	--returned: #7c4dbd;
-	--returned-soft: #f0e9fa;
-	--warn: #9a5b00;
-	--warn-soft: #fbf0dc;
-	--danger: #b42318;
-	--danger-soft: #fce8e6;
+	--text: #f0f0f0;
+	--text-muted: #a1a4a5;
+	--text-subtle: #6c7073;
+	--text-faint: #464a4d;
 
-	--radius-sm: 6px;
-	--radius: 10px;
-	--radius-lg: 14px;
-	--shadow: 0 1px 2px rgba(28, 33, 39, 0.05), 0 2px 8px rgba(28, 33, 39, 0.04);
+	--white-gradient: linear-gradient(to right bottom, #ffffff 30%, rgba(255, 255, 255, 0.5));
+	--button-glass: linear-gradient(104deg, rgba(253, 253, 253, 0.05) 5%, rgba(240, 240, 228, 0.1) 100%);
 
-	--font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-	--font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+	--green: #5ef0a1;
+	--green-soft: rgba(96, 254, 167, 0.1);
+	--blue: #7cb4ff;
+	--blue-soft: rgba(31, 118, 255, 0.18);
+	--purple: #b9a6ff;
+	--purple-soft: rgba(126, 86, 254, 0.2);
+	--orange: #ffb35c;
+	--orange-soft: rgba(255, 153, 0, 0.12);
+	--red: #ff8a8a;
+	--red-soft: rgba(255, 77, 77, 0.12);
+
+	--radius-xs: 6px;
+	--radius-sm: 8px;
+	--radius: 12px;
+	--radius-lg: 16px;
+	--radius-xl: 24px;
+	--radius-pill: 999px;
+
+	--font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+	--font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
 	--space-1: 4px;
 	--space-2: 8px;
@@ -39,6 +49,9 @@
 	--space-5: 24px;
 	--space-6: 32px;
 	--space-7: 48px;
+	--space-8: 72px;
 
+	--sidebar-width: 232px;
 	--content-width: 1040px;
+	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }

@@ -47,7 +47,7 @@ async function submit() {
 </script>
 
 <template>
-	<AuthLayout title="Create an account" subtitle="Email is optional; you can add one later.">
+	<AuthLayout title="Create your account" subtitle="Email is optional. You can add one later.">
 		<form class="form" novalidate @submit.prevent="submit">
 			<div class="field">
 				<label for="reg-username">Username</label>
@@ -61,33 +61,48 @@ async function submit() {
 					required
 					autofocus
 				/>
-				<span id="reg-username-hint" class="hint">{{ touched && problems.username ? problems.username : "3–32 characters." }}</span>
+				<span id="reg-username-hint" :class="['hint', { error: touched && problems.username }]">{{ touched && problems.username ? problems.username : "3–32 characters." }}</span>
 			</div>
 			<div class="field">
 				<label for="reg-email">Email <span class="subtle">(optional)</span></label>
-				<input id="reg-email" v-model="email" type="email" autocomplete="email" :aria-invalid="touched && !!problems.email" />
-				<span v-if="touched && problems.email" class="hint">{{ problems.email }}</span>
+				<input id="reg-email" v-model="email" type="email" autocomplete="email" placeholder="you@example.com" :aria-invalid="touched && !!problems.email" />
+				<span v-if="touched && problems.email" class="hint error">{{ problems.email }}</span>
 			</div>
-			<div class="field">
-				<label for="reg-password">Password</label>
-				<input
-					id="reg-password"
-					v-model="password"
-					type="password"
-					autocomplete="new-password"
-					:aria-invalid="touched && !!problems.password"
-					required
-				/>
-				<span class="hint">{{ touched && problems.password ? problems.password : "At least 8 characters." }}</span>
-			</div>
-			<div class="field">
-				<label for="reg-confirm">Confirm password</label>
-				<input id="reg-confirm" v-model="confirm" type="password" autocomplete="new-password" :aria-invalid="touched && !!problems.confirm" required />
-				<span v-if="touched && problems.confirm" class="hint">{{ problems.confirm }}</span>
+			<div class="field-pair">
+				<div class="field">
+					<label for="reg-password">Password</label>
+					<input id="reg-password" v-model="password" type="password" autocomplete="new-password" :aria-invalid="touched && !!problems.password" required />
+					<span :class="['hint', { error: touched && problems.password }]">{{ touched && problems.password ? problems.password : "At least 8 characters." }}</span>
+				</div>
+				<div class="field">
+					<label for="reg-confirm">Confirm</label>
+					<input id="reg-confirm" v-model="confirm" type="password" autocomplete="new-password" :aria-invalid="touched && !!problems.confirm" required />
+					<span v-if="touched && problems.confirm" class="hint error">{{ problems.confirm }}</span>
+				</div>
 			</div>
 			<p v-if="error" class="alert alert-error" role="alert">{{ error }}</p>
-			<button class="btn btn-primary" type="submit" :disabled="busy">{{ busy ? "Creating account…" : "Create account" }}</button>
+			<button class="btn btn-primary btn-block" type="submit" :disabled="busy">{{ busy ? "Creating account…" : "Create account" }}</button>
 		</form>
-		<p class="subtle">Already have an account? <RouterLink to="/login">Log in</RouterLink></p>
+		<p class="subtle foot">Already have an account? <RouterLink to="/login">Log in</RouterLink></p>
 	</AuthLayout>
 </template>
+
+<style scoped>
+.field-pair {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-3);
+	align-items: start;
+}
+
+.foot {
+	text-align: center;
+}
+
+@media (max-width: 480px) {
+	.field-pair {
+		grid-template-columns: 1fr;
+		gap: var(--space-4);
+	}
+}
+</style>

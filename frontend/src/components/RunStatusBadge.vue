@@ -21,30 +21,18 @@ const view = computed(() => {
 </script>
 
 <template>
-	<span :class="['badge', view.cls]">
-		<span v-if="status === 'running'" class="pulse" aria-hidden="true"></span>
-		{{ view.label }}
-	</span>
+	<span :class="['badge', 'badge-dot', view.cls, { running: status === 'running' }]">{{ view.label }}</span>
 </template>
 
 <style scoped>
-.pulse {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: currentColor;
+.running::before {
 	animation: pulse 1.2s ease-in-out infinite;
+	box-shadow: 0 0 8px currentColor;
 }
 
 @keyframes pulse {
 	50% {
-		opacity: 0.3;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.pulse {
-		animation: none;
+		opacity: 0.25;
 	}
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 
@@ -20,8 +20,10 @@ const deleteConfirm = ref("");
 const deleteBusy = ref(false);
 const deleteError = ref("");
 
+const initial = computed(() => (user.value?.username ?? "?").slice(0, 1).toUpperCase());
+
 function formatDate(value?: string) {
-	return value ? new Date(value).toLocaleString() : "";
+	return value ? new Date(value).toLocaleDateString(undefined, { dateStyle: "long" }) : "";
 }
 
 async function saveEmail() {
@@ -88,48 +90,52 @@ function signOut() {
 </script>
 
 <template>
-	<div class="page">
-		<div class="page-header">
+	<div class="page narrow">
+		<header class="page-header">
 			<div>
-				<h1>Account</h1>
-				<p>Manage how you sign in to Intersearch.</p>
+				<p class="eyebrow">Settings</p>
+				<h1 class="display">Account</h1>
+				<p class="lead">Manage how you sign in to Intersearch.</p>
 			</div>
-			<button type="button" class="btn btn-secondary" @click="signOut">Log out</button>
-		</div>
+			<button type="button" class="btn btn-secondary btn-sm" @click="signOut">Log out</button>
+		</header>
 
-		<section class="card" aria-labelledby="identity-heading">
-			<h2 id="identity-heading">Signed in as</h2>
-			<dl class="meta-list">
-				<dt>Username</dt>
-				<dd>{{ user?.username }}</dd>
-				<dt>Email</dt>
-				<dd>{{ user?.email ?? "Not set" }}</dd>
-				<dt>Member since</dt>
-				<dd>{{ formatDate(user?.createdAt) }}</dd>
-			</dl>
+		<section class="card identity" aria-labelledby="identity-heading">
+			<span class="avatar" aria-hidden="true">{{ initial }}</span>
+			<div class="identity-text">
+				<h2 id="identity-heading">{{ user?.username }}</h2>
+				<p class="muted">{{ user?.email ?? "No email on file" }}</p>
+			</div>
+			<span class="mono since">Member since {{ formatDate(user?.createdAt) }}</span>
 		</section>
 
-		<div class="grid-2">
-			<section class="card" aria-labelledby="email-heading">
+		<section class="card setting" aria-labelledby="email-heading">
+			<div class="setting-intro">
 				<h2 id="email-heading">Email</h2>
-				<form class="form" novalidate @submit.prevent="saveEmail">
-					<div class="field">
-						<label for="acct-email">Email address</label>
-						<input id="acct-email" v-model="email" type="email" autocomplete="email" />
-					</div>
-					<p v-if="emailMessage" :class="['alert', `alert-${emailMessage.kind}`]" role="status">{{ emailMessage.text }}</p>
-					<div><button class="btn btn-primary" type="submit" :disabled="emailBusy">{{ emailBusy ? "Saving…" : "Save email" }}</button></div>
-				</form>
-			</section>
+				<p class="subtle">Optional. Used to log in instead of your username.</p>
+			</div>
+			<form class="form" novalidate @submit.prevent="saveEmail">
+				<div class="field">
+					<label for="acct-email">Email address</label>
+					<input id="acct-email" v-model="email" type="email" autocomplete="email" placeholder="you@example.com" />
+				</div>
+				<p v-if="emailMessage" :class="['alert', `alert-${emailMessage.kind}`]" role="status">{{ emailMessage.text }}</p>
+				<div class="actions"><button class="btn btn-primary btn-sm" type="submit" :disabled="emailBusy">{{ emailBusy ? "Saving…" : "Save email" }}</button></div>
+			</form>
+		</section>
 
-			<section class="card" aria-labelledby="password-heading">
+		<section class="card setting" aria-labelledby="password-heading">
+			<div class="setting-intro">
 				<h2 id="password-heading">Password</h2>
-				<form class="form" novalidate @submit.prevent="savePassword">
-					<input type="text" autocomplete="username" :value="user?.username" hidden readonly />
-					<div class="field">
-						<label for="acct-current">Current password</label>
-						<input id="acct-current" v-model="currentPassword" type="password" autocomplete="current-password" />
-					</div>
+				<p class="subtle">Confirm your current password to set a new one.</p>
+			</div>
+			<form class="form" novalidate @submit.prevent="savePassword">
+				<input type="text" autocomplete="username" :value="user?.username" hidden readonly />
+				<div class="field">
+					<label for="acct-current">Current password</label>
+					<input id="acct-current" v-model="currentPassword" type="password" autocomplete="current-password" />
+				</div>
+				<div class="field-pair">
 					<div class="field">
 						<label for="acct-new">New password</label>
 						<input id="acct-new" v-model="newPassword" type="password" autocomplete="new-password" />
@@ -138,29 +144,29 @@ function signOut() {
 						<label for="acct-confirm">Confirm new password</label>
 						<input id="acct-confirm" v-model="confirmPassword" type="password" autocomplete="new-password" />
 					</div>
-					<p v-if="passwordMessage" :class="['alert', `alert-${passwordMessage.kind}`]" role="status">{{ passwordMessage.text }}</p>
-					<div>
-						<button class="btn btn-primary" type="submit" :disabled="passwordBusy || !currentPassword || !newPassword">
-							{{ passwordBusy ? "Saving…" : "Change password" }}
-						</button>
-					</div>
-				</form>
-			</section>
-		</div>
+				</div>
+				<p v-if="passwordMessage" :class="['alert', `alert-${passwordMessage.kind}`]" role="status">{{ passwordMessage.text }}</p>
+				<div class="actions">
+					<button class="btn btn-primary btn-sm" type="submit" :disabled="passwordBusy || !currentPassword || !newPassword">
+						{{ passwordBusy ? "Saving…" : "Change password" }}
+					</button>
+				</div>
+			</form>
+		</section>
 
-		<section class="card danger-zone" aria-labelledby="delete-heading">
-			<div>
+		<section class="card setting danger-zone" aria-labelledby="delete-heading">
+			<div class="setting-intro">
 				<h2 id="delete-heading">Delete account</h2>
-				<p class="muted">Permanently deletes your account, tracker history, and saved reports. This cannot be undone.</p>
+				<p class="subtle">Permanently deletes your account, tracker history, and saved reports. This cannot be undone.</p>
 			</div>
 			<form class="form" novalidate @submit.prevent="removeAccount">
 				<div class="field">
-					<label for="acct-delete">Type <strong>{{ user?.username }}</strong> to confirm</label>
+					<label for="acct-delete">Type <span class="mono">{{ user?.username }}</span> to confirm</label>
 					<input id="acct-delete" v-model="deleteConfirm" type="text" autocomplete="off" />
 				</div>
 				<p v-if="deleteError" class="alert alert-error" role="alert">{{ deleteError }}</p>
-				<div>
-					<button class="btn btn-danger" type="submit" :disabled="deleteBusy || deleteConfirm !== user?.username">
+				<div class="actions">
+					<button class="btn btn-danger btn-sm" type="submit" :disabled="deleteBusy || deleteConfirm !== user?.username">
 						{{ deleteBusy ? "Deleting…" : "Delete my account" }}
 					</button>
 				</div>
@@ -170,14 +176,88 @@ function signOut() {
 </template>
 
 <style scoped>
-.grid-2 {
+.narrow {
+	max-width: 820px;
+}
+
+.identity {
+	grid-template-columns: auto 1fr auto;
+	align-items: center;
+	gap: var(--space-4);
+}
+
+.avatar {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-	gap: var(--space-5);
+	place-items: center;
+	width: 48px;
+	height: 48px;
+	border-radius: 50%;
+	background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.03));
+	border: 1px solid var(--border-strong);
+	font-family: var(--font-display);
+	font-size: 1.6rem;
+}
+
+.identity-text {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.identity-text h2 {
+	font-size: 17px;
+}
+
+.since {
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-subtle);
+}
+
+.setting {
+	grid-template-columns: 220px 1fr;
+	gap: var(--space-6);
 	align-items: start;
 }
 
+.setting-intro {
+	display: grid;
+	gap: 6px;
+}
+
+.field-pair {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-3);
+}
+
+.actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
 .danger-zone {
-	border-color: #f0c9c4;
+	border-color: rgba(255, 110, 110, 0.18);
+	background: linear-gradient(180deg, rgba(255, 77, 77, 0.04), transparent 60%);
+}
+
+@media (max-width: 720px) {
+	.identity {
+		grid-template-columns: auto 1fr;
+	}
+
+	.since {
+		grid-column: 1 / -1;
+	}
+
+	.setting {
+		grid-template-columns: 1fr;
+		gap: var(--space-4);
+	}
+
+	.field-pair {
+		grid-template-columns: 1fr;
+	}
 }
 </style>

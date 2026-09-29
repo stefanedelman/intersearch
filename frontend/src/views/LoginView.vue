@@ -31,22 +31,28 @@ async function submit() {
 </script>
 
 <template>
-	<AuthLayout title="Log in" subtitle="Use your username or email.">
+	<AuthLayout title="Welcome back" subtitle="Log in with your username or email.">
 		<p v-if="expired && !error" class="alert alert-info">Your session ended. Log in again to continue.</p>
 		<form class="form" novalidate @submit.prevent="submit">
 			<div class="field">
 				<label for="login-username">Username or email</label>
-				<input id="login-username" v-model="username" type="text" autocomplete="username" required autofocus />
+				<input id="login-username" v-model="username" type="text" autocomplete="username" placeholder="NYUgrader" required autofocus />
 			</div>
 			<div class="field">
 				<label for="login-password">Password</label>
-				<input id="login-password" v-model="password" type="password" autocomplete="current-password" required />
+				<input id="login-password" v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
 			</div>
 			<p v-if="error" class="alert alert-error" role="alert">{{ error }}</p>
-			<button class="btn btn-primary" type="submit" :disabled="busy || !username || !password">
+			<button class="btn btn-primary btn-block" type="submit" :disabled="busy || !username || !password">
 				{{ busy ? "Logging in…" : "Log in" }}
 			</button>
 		</form>
-		<p class="subtle">No account yet? <RouterLink to="/register">Create one</RouterLink></p>
+		<p class="subtle foot">No account yet? <RouterLink to="/register">Create one</RouterLink></p>
 	</AuthLayout>
 </template>
+
+<style scoped>
+.foot {
+	text-align: center;
+}
+</style>

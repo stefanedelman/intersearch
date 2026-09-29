@@ -15,15 +15,15 @@ const markdown = ref("");
 const sources = ref<SourceAttempt[]>([]);
 const trace = ref<TraceEvent[]>([]);
 const traceCursor = ref<string | null>(null);
-const showTrace = ref(false);
+const traceLoaded = ref(false);
 const loading = ref(true);
 const error = ref("");
 const tab = ref<"report" | "sources" | "trace">("report");
 
 const statusLabel: Record<SourceAttempt["status"], string> = {
 	fetched: "Fetched",
-	skipped_seen: "Skipped (already seen)",
-	rejected: "Rejected by guardrail",
+	skipped_seen: "Reused",
+	rejected: "Blocked",
 	failed: "Failed",
 };
 const statusClass: Record<SourceAttempt["status"], string> = {
@@ -34,6 +34,25 @@ const statusClass: Record<SourceAttempt["status"], string> = {
 };
 
 const totals = computed(() => run.value?.budgetTotals ?? null);
+const stats = computed(() => {
+	if (!run.value) return [];
+	const counts = run.value.attemptCounts;
+	const list: { label: string; value: string | number }[] = [
+		{ label: "Fetched", value: counts.fetched ?? 0 },
+		{ label: "Reused", value: counts.skipped_seen ?? 0 },
+		{ label: "Blocked", value: counts.rejected ?? 0 },
+		{ label: "Failed", value: counts.failed ?? 0 },
+	];
+	if (totals.value) {
+		list.push(
+			{ label: "Model calls", value: totals.value.modelCalls ?? 0 },
+			{ label: "Tokens", value: ((totals.value.inputTokens ?? 0) + (totals.value.outputTokens ?? 0)).toLocaleString() },
+			{ label: "Searches", value: totals.value.searches ?? 0 },
+			{ label: "Requests", value: totals.value.networkRequests ?? 0 },
+		);
+	}
+	return list;
+});
 
 async function loadTrace(cursor?: string) {
 	const page = await trackerApi.trace(runId.value, cursor);
@@ -53,7 +72,14 @@ function downloadMarkdown() {
 
 function short(value: unknown) {
 	const text = typeof value === "string" ? value : JSON.stringify(value);
-	return text && text.length > 160 ? `${text.slice(0, 160)}…` : (text ?? "");
+	return text && text.length > 140 ? `${text.slice(0, 140)}…` : (text ?? "");
+}
+
+function traceStatusClass(status: string) {
+	if (status === "ok" || /^2/.test(status)) return "badge-new";
+	if (status === "error" || status === "rejected" || status === "exhausted") return "badge-danger";
+	if (status === "retry" || status === "invalid") return "badge-warn";
+	return "";
 }
 
 onMounted(async () => {
@@ -75,8 +101,8 @@ onMounted(async () => {
 
 async function openTrace() {
 	tab.value = "trace";
-	if (!showTrace.value) {
-		showTrace.value = true;
+	if (!traceLoaded.value) {
+		traceLoaded.value = true;
 		await loadTrace().catch((err) => (error.value = (err as Error).message));
 	}
 }
@@ -84,38 +110,38 @@ async function openTrace() {
 
 <template>
 	<div class="page">
-		<div class="page-header">
+		<header class="page-header">
 			<div>
-				<RouterLink to="/runs" class="subtle">← Run history</RouterLink>
-				<h1>Run {{ runId.slice(0, 8) }}</h1>
-				<p v-if="run">{{ formatDateTime(run.startedAt) }}<span v-if="run.finishedAt"> · {{ formatDuration(new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) }}</span></p>
+				<RouterLink to="/runs" class="eyebrow back">← Run history</RouterLink>
+				<h1 class="display">Run <span class="mono run-id">{{ runId.slice(0, 8) }}</span></h1>
+				<p v-if="run" class="lead">
+					{{ formatDateTime(run.startedAt) }}<span v-if="run.finishedAt"> · took {{ formatDuration(new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) }}</span>
+				</p>
 			</div>
 			<div class="row">
 				<RunStatusBadge v-if="run" :status="run.status" :stale="run.errorCode === 'abandoned'" />
-				<button v-if="markdown" type="button" class="btn btn-secondary" @click="downloadMarkdown">Export Markdown</button>
+				<button v-if="markdown" type="button" class="btn btn-secondary btn-sm" @click="downloadMarkdown">Export Markdown</button>
 			</div>
-		</div>
+		</header>
 
 		<p v-if="error" class="alert alert-error" role="alert">{{ error }}</p>
-		<p v-if="loading" class="muted">Loading run…</p>
+		<div v-if="loading" class="skeleton" style="height: 200px" aria-label="Loading run"></div>
 
 		<template v-if="run && !loading">
 			<p v-if="run.stopReason" :class="['alert', run.status === 'failed' ? 'alert-error' : 'alert-warn']">Stopped: {{ run.stopReason }}</p>
 
-			<section class="card card-compact stats" aria-label="Run totals">
-				<div><span class="stat">{{ run.attemptCounts.fetched ?? 0 }}</span><span class="subtle">fetched</span></div>
-				<div><span class="stat">{{ run.attemptCounts.skipped_seen ?? 0 }}</span><span class="subtle">skipped (seen)</span></div>
-				<div><span class="stat">{{ run.attemptCounts.rejected ?? 0 }}</span><span class="subtle">rejected</span></div>
-				<div><span class="stat">{{ run.attemptCounts.failed ?? 0 }}</span><span class="subtle">failed</span></div>
-				<div v-if="totals"><span class="stat">{{ totals.modelCalls ?? 0 }}</span><span class="subtle">model calls</span></div>
-				<div v-if="totals"><span class="stat">{{ ((totals.inputTokens ?? 0) + (totals.outputTokens ?? 0)).toLocaleString() }}</span><span class="subtle">tokens</span></div>
-				<div v-if="totals"><span class="stat">{{ totals.searchCredits ?? 0 }}</span><span class="subtle">search credits</span></div>
-				<div v-if="totals"><span class="stat">{{ totals.networkRequests ?? 0 }}</span><span class="subtle">external requests</span></div>
+			<section class="stats" aria-label="Run totals">
+				<div v-for="stat in stats" :key="stat.label" class="stat">
+					<span class="stat-value">{{ stat.value }}</span>
+					<span class="eyebrow">{{ stat.label }}</span>
+				</div>
 			</section>
 
-			<div class="tabs" role="tablist">
+			<div class="tabs" role="tablist" aria-label="Run details">
 				<button type="button" role="tab" :aria-selected="tab === 'report'" :class="{ active: tab === 'report' }" @click="tab = 'report'">Report</button>
-				<button type="button" role="tab" :aria-selected="tab === 'sources'" :class="{ active: tab === 'sources' }" @click="tab = 'sources'">Articles ({{ sources.length }})</button>
+				<button type="button" role="tab" :aria-selected="tab === 'sources'" :class="{ active: tab === 'sources' }" @click="tab = 'sources'">
+					Articles <span class="tab-count mono">{{ sources.length }}</span>
+				</button>
 				<button type="button" role="tab" :aria-selected="tab === 'trace'" :class="{ active: tab === 'trace' }" @click="openTrace">Trace</button>
 			</div>
 
@@ -125,7 +151,7 @@ async function openTrace() {
 			</div>
 
 			<div v-else-if="tab === 'sources'" class="stack">
-				<p class="subtle">Every page the agent tried to fetch on this run, including ones reused from earlier runs and ones the guardrails refused.</p>
+				<p class="subtle">Every page the agent tried to fetch on this run, including ones reused from earlier runs and ones the guardrails blocked.</p>
 				<div class="table-wrap">
 					<table>
 						<thead>
@@ -143,9 +169,9 @@ async function openTrace() {
 									<a v-if="source.status !== 'rejected' && safeHref(source.finalUrl ?? source.requestedUrl)" :href="safeHref(source.finalUrl ?? source.requestedUrl)!" target="_blank" rel="noopener noreferrer">{{ source.requestedUrl }}</a>
 									<span v-else>{{ source.requestedUrl }}</span>
 								</td>
-								<td class="nowrap">{{ formatDateTime(source.fetchedAt ?? source.attemptedAt) }}</td>
+								<td class="mono dim">{{ formatDateTime(source.fetchedAt ?? source.attemptedAt) }}</td>
 								<td>
-									<span :class="['badge', statusClass[source.status]]">{{ statusLabel[source.status] }}</span>
+									<span :class="['badge', 'badge-dot', statusClass[source.status]]">{{ statusLabel[source.status] }}</span>
 									<p v-if="source.reason" class="subtle reason">{{ source.reason }}</p>
 								</td>
 							</tr>
@@ -160,7 +186,7 @@ async function openTrace() {
 			<div v-else class="stack">
 				<p class="subtle">Every model call, tool call, and network round trip, with arguments redacted.</p>
 				<div class="table-wrap">
-					<table>
+					<table class="trace">
 						<thead>
 							<tr>
 								<th scope="col">Step</th>
@@ -174,77 +200,137 @@ async function openTrace() {
 						</thead>
 						<tbody>
 							<tr v-for="event in trace" :key="event.id">
-								<td>{{ event.step }}</td>
-								<td>{{ event.category }}</td>
+								<td class="mono dim">{{ event.step }}</td>
+								<td class="mono">{{ event.category }}</td>
 								<td class="url-cell">{{ event.tool ?? event.service ?? "—" }}</td>
 								<td>
-									<span :class="['badge', event.status === 'ok' || /^2/.test(event.status) ? 'badge-new' : event.status === 'error' || event.status === 'rejected' ? 'badge-danger' : '']">{{ event.status }}</span>
+									<span :class="['badge', traceStatusClass(event.status)]">{{ event.status }}</span>
 									<span v-if="event.errorCode" class="subtle"> {{ event.errorCode }}</span>
 								</td>
-								<td class="nowrap">{{ event.latencyMs !== null ? `${event.latencyMs} ms` : "—" }}</td>
-								<td class="nowrap">{{ event.inputTokens !== null ? `${event.inputTokens} in / ${event.outputTokens ?? 0} out` : "—" }}</td>
+								<td class="mono dim">{{ event.latencyMs !== null ? `${event.latencyMs} ms` : "—" }}</td>
+								<td class="mono dim">{{ event.inputTokens !== null ? `${event.inputTokens} / ${event.outputTokens ?? 0}` : "—" }}</td>
 								<td class="url-cell">{{ short(event.arguments) }}</td>
+							</tr>
+							<tr v-if="traceLoaded && !trace.length">
+								<td colspan="7" class="muted">No trace events.</td>
 							</tr>
 						</tbody>
 					</table>
 				</div>
-				<div v-if="traceCursor"><button type="button" class="btn btn-secondary" @click="loadTrace(traceCursor!)">Load more</button></div>
+				<div v-if="traceCursor"><button type="button" class="btn btn-secondary btn-sm" @click="loadTrace(traceCursor!)">Load more</button></div>
 			</div>
 		</template>
 	</div>
 </template>
 
 <style scoped>
-.stats {
-	grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-	text-align: center;
+.back {
+	display: inline-block;
+	margin-bottom: var(--space-3);
+	text-decoration: none;
 }
 
-.stats > div {
+.back:hover {
+	color: var(--text);
+}
+
+.run-id {
+	font-size: 0.55em;
+	-webkit-text-fill-color: var(--text-muted);
+	letter-spacing: 0;
+	vertical-align: 0.2em;
+}
+
+.stats {
 	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--surface);
+	overflow: hidden;
 }
 
 .stat {
-	font-size: 1.35rem;
-	font-weight: 700;
-	font-variant-numeric: tabular-nums;
+	display: grid;
+	gap: 6px;
+	padding: var(--space-4) var(--space-5);
+	box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border);
+}
+
+.stat-value {
+	font-family: var(--font-display);
+	font-size: 1.9rem;
+	line-height: 1;
+	background: var(--white-gradient);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
 }
 
 .tabs {
-	display: flex;
-	gap: var(--space-1);
-	border-bottom: 1px solid var(--border);
+	display: inline-flex;
+	justify-self: start;
+	gap: 2px;
+	padding: 3px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	max-width: 100%;
 	overflow-x: auto;
 }
 
 .tabs button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 14px;
 	font: inherit;
-	font-weight: 560;
+	font-size: 13px;
+	font-weight: 500;
 	background: none;
 	border: none;
-	border-bottom: 2px solid transparent;
-	padding: 8px 14px;
+	border-radius: var(--radius-sm);
 	color: var(--text-muted);
 	cursor: pointer;
 	white-space: nowrap;
+	transition: background 0.15s, color 0.15s;
+}
+
+.tabs button:hover {
+	color: var(--text);
 }
 
 .tabs button.active {
-	color: var(--accent-text);
-	border-bottom-color: var(--accent);
+	color: var(--text);
+	background: var(--surface-strong);
+	box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.tab-count {
+	font-size: 11px;
+	color: var(--text-subtle);
 }
 
 .title-cell {
 	max-width: 260px;
 	overflow-wrap: anywhere;
+	font-weight: 500;
 }
 
-.nowrap {
+.dim {
+	color: var(--text-muted);
+	font-size: 12px;
 	white-space: nowrap;
 }
 
 .reason {
-	margin-top: 4px;
+	margin-top: 6px;
 	max-width: 280px;
+	font-size: 12px;
+}
+
+.trace td {
+	font-size: 12.5px;
 }
 </style>
