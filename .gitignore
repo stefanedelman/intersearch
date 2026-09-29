@@ -9,11 +9,10 @@ coverage/
 # Generated Prisma client
 backend/src/generated/
 
-# Environment files: only the committed course env and examples are allowed
+# Environment files: only examples belong in Git
 .env*
 *.local
 !.env.example
-!backend/.env
 !backend/.env.example
 !frontend/.env.example
 

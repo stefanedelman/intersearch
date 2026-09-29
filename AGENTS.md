@@ -23,7 +23,7 @@ Intersearch is a personal internship research dashboard built for NYU FNMS Assig
 
 ## Secrets
 
-- `backend/.env` is committed and may contain only the throwaway course Supabase project's credentials plus non-secret constants.
+- `backend/.env` is local and ignored. Never commit environment credentials; keep only placeholder `.env.example` files in Git.
 - Model and search keys (`GROQ_API_KEY`, `TAVILY_API_KEY`) live only in the ignored `backend/.env.local`.
 - Never print, log, trace, or export passwords, tokens, or keys.
 

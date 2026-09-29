@@ -23,7 +23,7 @@ Tracker CLI ──bearer token──> Express API          (the tracker never to
 - **Node.js 22.13 or newer** (Node 24 also works). Check with `node -v`.
 - **npm 10+** (comes with Node).
 - **Python 3.9+**, only for the `python -m tracker.tools ...` command form.
-- For the tracker only: a free **Groq** API key and a free **Tavily** API key (see [Keys](#keys-for-the-tracker)). The account app needs no keys.
+- Supabase credentials in your local `backend/.env` (see [Environment](#environment)). For the tracker, also provide a **Groq** API key and a **Tavily** API key.
 
 ## Run it (A1: backend and frontend)
 
@@ -32,6 +32,8 @@ Run these from a terminal, in order, in the repository root.
 ```bash
 git clone https://github.com/stefanedelman/intersearch.git
 cd intersearch
+cp backend/.env.example backend/.env
+# Fill in backend/.env with your course Supabase credentials before continuing.
 npm run setup
 npm run db:migrate
 npm run db:seed
@@ -72,14 +74,14 @@ npm run verify
 
 | File | In git? | Contents |
 | --- | --- | --- |
-| `backend/.env` | **Yes, on purpose** | Credentials for the **throwaway Supabase project made only for this course**: database URLs, project URL, and service-role key. It also holds non-secret settings and the course grader credentials. A1 allows committing this one database credential. The service-role key is committed on the same basis: it only reaches that same throwaway project. |
+| `backend/.env` | No (ignored) | Local credentials for the dedicated course Supabase project, non-secret settings, and course grader credentials. Copy `backend/.env.example` and fill it in before setup. Never commit this file. |
 | `backend/.env.local` | No (ignored) | Your `GROQ_API_KEY` and `TAVILY_API_KEY`. Created empty by `npm run setup`. |
 | `.env.example`, `backend/.env.example`, `frontend/.env.example` | Yes | Every variable, documented. |
 
 The frontend needs no `.env`: it defaults to the API at `http://localhost:3000`.
 
 <a id="supabase-setup"></a>
-**Supabase setup** (only needed if you are recreating the course project, not for grading): create a new Supabase project used for nothing else, then fill in `backend/.env`:
+**Supabase setup:** use the dedicated course Supabase project, or create a new project used for nothing else, then fill in your local `backend/.env`:
 
 - `DATABASE_URL`: the transaction pooler URL (port 6543).
 - `DIRECT_URL`: the session pooler URL (port 5432).

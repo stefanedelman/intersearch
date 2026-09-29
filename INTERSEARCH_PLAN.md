@@ -7,6 +7,8 @@ Intended GitHub repository name: `intersearch`
 
 ## 0. Implementation status (updated 2026-09-28)
 
+**Environment policy update (2026-09-28):** `backend/.env` is local and ignored, and has been removed from local Git history at the user's request. This supersedes all instructions below to commit course credentials or expect them in a fresh clone. Copy `backend/.env.example` to `backend/.env` and configure the dedicated course Supabase project before setup and migrations. Only placeholder environment examples belong in Git.
+
 **Built and verified locally** (61 unit + 18 integration tests pass; `npm run build` passes; `npm run verify` 29/29 against a local preview backend that uses fake auth):
 
 - **Steps 01–03:** repo initialized on `main` (nothing staged), `AGENTS.md`, `.gitignore`, both packages scaffolded and locked, root scripts, `.nvmrc` (Node `>=22.13`), and contracts for auth, tracker, and report.
