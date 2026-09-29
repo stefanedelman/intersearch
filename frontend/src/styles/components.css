@@ -13,6 +13,8 @@
 	align-items: flex-end;
 	justify-content: space-between;
 	gap: var(--space-4);
+	padding-bottom: var(--space-5);
+	border-bottom: 1px solid var(--border);
 }
 
 .page-header .lead {
@@ -62,6 +64,13 @@
 	gap: var(--space-3);
 }
 
+.section-title::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--border);
+}
+
 .section-title h2 {
 	font-family: var(--font-display);
 	font-weight: 400;
@@ -76,10 +85,11 @@
 .count {
 	font-family: var(--font-mono);
 	font-size: 12px;
-	color: var(--text-subtle);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-pill);
-	padding: 1px 8px;
+	color: var(--accent);
+	background: var(--accent-soft);
+	border: 1px solid rgba(245, 220, 82, 0.3);
+	border-radius: 2px;
+	padding: 2px 8px;
 }
 
 /* ---------- Cards ---------- */
@@ -149,7 +159,7 @@ input[type="text"],
 input[type="email"],
 input[type="password"] {
 	width: 100%;
-	height: 40px;
+	height: 44px;
 	font: inherit;
 	font-size: 14px;
 	color: var(--text);
@@ -172,7 +182,7 @@ input:focus {
 	outline: none;
 	border-color: var(--border-focus);
 	background: rgba(255, 255, 255, 0.05);
-	box-shadow: 0 0 0 3px rgba(225, 242, 254, 0.08);
+	box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 input[aria-invalid="true"] {
@@ -185,7 +195,7 @@ input[aria-invalid="true"] {
 	align-items: center;
 	justify-content: center;
 	gap: var(--space-2);
-	height: 40px;
+	height: 44px;
 	padding: 0 16px;
 	font: inherit;
 	font-size: 14px;
@@ -208,23 +218,25 @@ input[aria-invalid="true"] {
 }
 
 .btn-primary {
-	background: #f0f0f0;
-	color: #000;
+	background: var(--accent);
+	color: var(--ink);
+	border-color: var(--accent);
+	box-shadow: 3px 3px 0 #090a09, 4px 4px 0 rgba(245, 220, 82, 0.45);
 }
 
 .btn-primary:hover:not(:disabled) {
-	background: #ffffff;
-	color: #000;
+	background: #ffe978;
+	color: var(--ink);
 }
 
 .btn-secondary {
 	background: var(--button-glass);
-	border: 2px solid rgba(255, 255, 255, 0.05);
+	border: 1px solid var(--border-strong);
 	color: #fff;
 }
 
 .btn-secondary:hover:not(:disabled) {
-	border-color: rgba(255, 255, 255, 0.12);
+	border-color: var(--accent);
 	color: #fff;
 }
 
@@ -321,7 +333,7 @@ input[aria-invalid="true"] {
 	color: #ffd9aa;
 }
 
-/* ---------- Badges (tinted pills) ---------- */
+/* ---------- Compact status labels ---------- */
 .badge {
 	display: inline-flex;
 	align-items: center;
@@ -329,8 +341,11 @@ input[aria-invalid="true"] {
 	height: 22px;
 	padding: 0 9px;
 	border-radius: var(--radius-pill);
-	font-size: 12px;
+	font-family: var(--font-mono);
+	font-size: 10px;
 	font-weight: 500;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
 	white-space: nowrap;
 	background: var(--surface-strong);
 	color: var(--text-muted);
@@ -346,9 +361,9 @@ input[aria-invalid="true"] {
 }
 
 .badge-new {
-	background: var(--green-soft);
-	border-color: rgba(96, 254, 167, 0.18);
-	color: var(--green);
+	background: #b9e9b0;
+	border-color: #b9e9b0;
+	color: var(--ink);
 }
 
 .badge-still {
@@ -358,9 +373,9 @@ input[aria-invalid="true"] {
 }
 
 .badge-returned {
-	background: var(--purple-soft);
-	border-color: rgba(150, 120, 255, 0.25);
-	color: var(--purple);
+	background: var(--pink);
+	border-color: var(--pink);
+	color: var(--ink);
 }
 
 .badge-warn {
@@ -411,7 +426,7 @@ th {
 	text-transform: uppercase;
 	color: var(--text-subtle);
 	white-space: nowrap;
-	background: rgba(255, 255, 255, 0.015);
+	background: var(--accent-soft);
 }
 
 tbody tr {
@@ -492,7 +507,9 @@ tr:last-child td {
 	gap: 10px;
 	font-family: var(--font-mono);
 	font-size: 13px;
-	color: #ebeced;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	color: var(--text);
 	background: var(--surface-solid);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -502,7 +519,7 @@ tr:last-child td {
 
 .command::before {
 	content: "$";
-	color: var(--text-faint);
+	color: var(--accent);
 	user-select: none;
 }
 

@@ -591,7 +591,7 @@ Always display global current ranks even when grouped into sections. Source titl
 
 ## 11. UI specification
 
-Visual direction: a focused research workspace with warm white surfaces, dark readable text, a restrained blue/teal accent, and compact cards. Use ordinary CSS variables and Vue components, with no new design framework required. Reuse familiar layout conventions from Cirilio without copying its brand.
+Visual direction (updated 2026-09-28): preserve Intersearch’s dark surfaces and editorial serif typography, blended with Loot Drop-inspired bold sans-serif headlines, warm yellow accents, squared labels, selective pink/green status colors, and offset shadows. Keep report evidence readable, navigation clear, and layouts responsive. Use ordinary CSS variables and Vue components, with no new design framework required.
 
 | Screen | Required content and behavior |
 | --- | --- |

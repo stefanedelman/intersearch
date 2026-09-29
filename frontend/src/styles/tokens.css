@@ -1,21 +1,24 @@
-/* Visual language adapted from resend.com: pure black, hairline translucent borders, glassy
-   surfaces, a serif display face with a fading white gradient, and tinted status pills. */
+/* Dark editorial surfaces and serif type, with bold yellow print-inspired accents. */
 :root {
 	color-scheme: dark;
 
-	--bg: #000000;
-	--surface: rgba(255, 255, 255, 0.025);
+	--bg: #090a09;
+	--surface: rgba(255, 255, 255, 0.035);
 	--surface-hover: rgba(255, 255, 255, 0.045);
 	--surface-strong: rgba(255, 255, 255, 0.06);
-	--surface-solid: #0a0b0c;
-	--border: rgba(225, 242, 254, 0.1);
-	--border-strong: rgba(225, 242, 254, 0.18);
-	--border-focus: rgba(225, 242, 254, 0.42);
+	--surface-solid: #141512;
+	--border: rgba(237, 236, 217, 0.16);
+	--border-strong: rgba(237, 236, 217, 0.32);
+	--border-focus: #f5dc52;
+	--accent: #f5dc52;
+	--accent-soft: rgba(245, 220, 82, 0.09);
+	--ink: #15160f;
+	--pink: #f0a1c0;
 
-	--text: #f0f0f0;
-	--text-muted: #a1a4a5;
-	--text-subtle: #6c7073;
-	--text-faint: #464a4d;
+	--text: #f3f1e7;
+	--text-muted: #afafa4;
+	--text-subtle: #93958b;
+	--text-faint: #75786e;
 
 	--white-gradient: linear-gradient(to right bottom, #ffffff 30%, rgba(255, 255, 255, 0.5));
 	--button-glass: linear-gradient(104deg, rgba(253, 253, 253, 0.05) 5%, rgba(240, 240, 228, 0.1) 100%);
@@ -31,12 +34,12 @@
 	--red: #ff8a8a;
 	--red-soft: rgba(255, 77, 77, 0.12);
 
-	--radius-xs: 6px;
-	--radius-sm: 8px;
-	--radius: 12px;
-	--radius-lg: 16px;
-	--radius-xl: 24px;
-	--radius-pill: 999px;
+	--radius-xs: 2px;
+	--radius-sm: 4px;
+	--radius: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 12px;
+	--radius-pill: 4px;
 
 	--font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
@@ -52,6 +55,6 @@
 	--space-8: 72px;
 
 	--sidebar-width: 232px;
-	--content-width: 1040px;
+	--content-width: 1200px;
 	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }

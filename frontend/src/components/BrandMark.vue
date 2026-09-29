@@ -6,9 +6,9 @@
 				<stop offset="1" stop-color="#ffffff" stop-opacity="0.02" />
 			</linearGradient>
 		</defs>
-		<rect x="0.5" y="0.5" width="31" height="31" rx="8.5" fill="url(#mark-fill)" stroke="#ffffff" stroke-opacity="0.2" />
-		<circle cx="14.5" cy="14.5" r="6" fill="none" stroke="#f0f0f0" stroke-width="2.2" />
-		<path d="M19 19l5 5" stroke="#f0f0f0" stroke-width="2.2" stroke-linecap="round" />
+		<rect x="0.5" y="0.5" width="31" height="31" rx="5" fill="url(#mark-fill)" stroke="#f5dc52" stroke-opacity="0.6" />
+		<circle cx="14.5" cy="14.5" r="6" fill="none" stroke="#f5dc52" stroke-width="2.2" />
+		<path d="M19 19l5 5" stroke="#f5dc52" stroke-width="2.2" stroke-linecap="round" />
 	</svg>
 </template>
 

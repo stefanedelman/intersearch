@@ -55,13 +55,13 @@ onMounted(async () => {
 
 <template>
 	<div class="page">
-		<header class="page-header">
+		<header class="page-header dashboard-header">
 			<div>
-				<p class="eyebrow">Signed in as {{ user?.username }}</p>
-				<h1 class="display">Dashboard</h1>
-				<p v-if="config" class="lead">{{ config.tracker.topic }}</p>
+				<p class="eyebrow"><span class="dashboard-label">Dashboard</span> / {{ user?.username }}</p>
+				<h1 class="headline">Find your<em>next move.</em></h1>
+				<p class="lead">{{ config?.tracker.topic ?? "A little research. A clearer next step." }}</p>
 			</div>
-			<RouterLink v-if="latest" to="/runs" class="btn btn-secondary">Run history</RouterLink>
+			<div class="header-aside"><span class="desk-sticker"><span aria-hidden="true">✳</span> Follow the<br />possibility.</span><RouterLink v-if="latest" to="/runs" class="btn btn-secondary">Run history ↗</RouterLink></div>
 		</header>
 
 		<p v-if="error" class="alert alert-error" role="alert">{{ error }}</p>
@@ -74,7 +74,7 @@ onMounted(async () => {
 		<template v-else-if="!error">
 			<section class="overview" aria-label="Tracker overview">
 				<div class="card overview-target">
-					<span class="eyebrow">Tracking</span>
+					<div class="row between"><span class="eyebrow">01 / The search brief</span><span class="brief-cross" aria-hidden="true">↗</span></div>
 					<dl v-if="config" class="facts">
 						<div>
 							<dt class="mono">Top</dt>
@@ -99,7 +99,7 @@ onMounted(async () => {
 
 				<div class="card overview-run">
 					<div class="row between">
-						<span class="eyebrow">{{ running ? "Now" : "Latest run" }}</span>
+						<span class="eyebrow">{{ running ? "02 / In progress" : "02 / Latest run" }}</span>
 						<RunStatusBadge v-if="running" status="running" />
 						<RunStatusBadge v-else-if="latest" :status="latest.status" :stale="latest.errorCode === 'abandoned'" />
 					</div>
@@ -128,19 +128,114 @@ onMounted(async () => {
 				<ReportSections :report="report" />
 			</template>
 
-			<section v-else class="card">
+			<section v-else class="card first-run">
+				<div class="first-run-top"><span class="eyebrow">Your shortlist starts here</span><span class="stamp">Awaiting first report</span></div>
 				<div class="empty">
-					<span class="eyebrow">Nothing here yet</span>
-					<h2>Run the tracker</h2>
-					<p>Start a run from your terminal. The ranked report appears here when it finishes.</p>
+					<span class="empty-symbol" aria-hidden="true">↗</span>
+					<h2>Good things are worth finding.</h2>
+					<p>Start a run from your terminal.<br />Your ranked, source-backed shortlist will land right here.</p>
 					<span class="command">npm run tracker:run</span>
 				</div>
+				<div class="research-steps"><span><b>01</b> Read the job boards</span><span><b>02</b> Rank the matches</span><span><b>03</b> See what changed</span></div>
 			</section>
 		</template>
 	</div>
 </template>
 
 <style scoped>
+.dashboard-header {
+	align-items: center;
+	padding-bottom: 32px;
+}
+.dashboard-header > div:first-child {
+	flex: 1;
+	min-width: 0;
+}
+.dashboard-label {
+	color: var(--accent);
+}
+.header-aside {
+	display: grid;
+	justify-items: end;
+	gap: 30px;
+	padding-right: 8px;
+}
+.desk-sticker {
+	display: block;
+	position: relative;
+	padding: 14px 18px;
+	border: 2px solid var(--ink);
+	background: var(--accent);
+	color: var(--ink);
+	font-family: var(--font-display);
+	font-size: 26px;
+	line-height: 1;
+	transform: rotate(6deg);
+	box-shadow: 4px 4px 0 #090a09, 5px 5px 0 var(--accent);
+}
+.desk-sticker > span {
+	position: absolute;
+	top: -22px;
+	right: -12px;
+	color: var(--pink);
+	font-family: var(--font-sans);
+	font-size: 42px;
+	text-shadow: 2px 2px var(--ink);
+}
+.brief-cross {
+	color: var(--accent);
+	font-size: 22px;
+	line-height: 1;
+}
+.overview-target {
+	border-top: 2px solid var(--accent);
+}
+.overview-run {
+	border-top: 2px solid var(--pink);
+}
+.first-run {
+	background: linear-gradient(140deg, rgba(245, 220, 82, 0.035), transparent 60%), var(--surface);
+}
+.first-run-top {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+}
+.first-run .empty {
+	padding: 10px 8px 26px;
+}
+.empty-symbol {
+	color: var(--accent);
+	font-size: 48px;
+	line-height: 1;
+}
+.first-run .empty h2 {
+	font-size: clamp(2rem, 3vw, 2.8rem);
+}
+.first-run .empty p {
+	max-width: 44ch;
+}
+.first-run .command {
+	margin-top: 10px;
+}
+.research-steps {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 16px;
+	border-top: 1px solid var(--border);
+	padding-top: 20px;
+	font-family: var(--font-mono);
+	font-size: 10px;
+	color: var(--text-muted);
+}
+.research-steps b {
+	color: var(--accent);
+	margin-right: 8px;
+	font-weight: 400;
+}
+
 .page-header .eyebrow {
 	margin-bottom: var(--space-3);
 }
@@ -159,9 +254,9 @@ onMounted(async () => {
 
 .facts {
 	display: grid;
-	grid-template-columns: repeat(3, auto);
+	grid-template-columns: auto auto minmax(0, 1fr);
 	justify-content: start;
-	gap: var(--space-6);
+	gap: var(--space-5);
 	margin: 0;
 }
 
@@ -182,6 +277,7 @@ onMounted(async () => {
 	font-size: 15px;
 	font-weight: 500;
 	text-transform: capitalize;
+	overflow-wrap: anywhere;
 }
 
 .chips {
@@ -193,12 +289,13 @@ onMounted(async () => {
 .chip {
 	display: inline-flex;
 	align-items: center;
-	height: 26px;
+	min-height: 26px;
 	padding: 0 11px;
 	border-radius: var(--radius-pill);
 	border: 1px solid var(--border);
 	background: rgba(255, 255, 255, 0.02);
-	font-size: 12.5px;
+	font-family: var(--font-mono);
+	font-size: 11px;
 	color: var(--text-muted);
 }
 
@@ -237,7 +334,8 @@ onMounted(async () => {
 }
 
 .stat-value {
-	font-family: var(--font-display);
+	font-family: var(--font-sans);
+	font-weight: 700;
 	font-size: 2.1rem;
 	line-height: 1;
 	background: var(--white-gradient);
@@ -253,6 +351,20 @@ onMounted(async () => {
 }
 
 @media (max-width: 640px) {
+	.header-aside {
+		padding: 0;
+		justify-items: start;
+	}
+	.desk-sticker {
+		display: none;
+	}
+	.research-steps {
+		grid-template-columns: 1fr;
+		gap: 10px;
+	}
+	.first-run-top .stamp {
+		font-size: 8px;
+	}
 	.facts {
 		grid-template-columns: 1fr 1fr;
 		gap: var(--space-4);

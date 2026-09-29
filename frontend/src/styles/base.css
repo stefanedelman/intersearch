@@ -23,8 +23,8 @@ body {
 }
 
 ::selection {
-	background: rgba(255, 255, 255, 0.2);
-	color: #fff;
+	background: var(--accent);
+	color: var(--ink);
 }
 
 h1,
@@ -36,7 +36,7 @@ h3 {
 	line-height: 1.2;
 }
 
-/* Display headings: serif with Resend's fading white gradient. */
+/* Serif remains the quieter editorial voice throughout the workspace. */
 .display {
 	font-family: var(--font-display);
 	font-weight: 400;
@@ -50,6 +50,39 @@ h3 {
 
 h1.display {
 	font-size: clamp(2.4rem, 4.2vw, 3.4rem);
+}
+
+.headline {
+	font-family: var(--font-sans);
+	font-size: clamp(2.8rem, 5.5vw, 5.4rem);
+	font-weight: 800;
+	letter-spacing: -0.065em;
+	line-height: 0.98;
+	text-transform: uppercase;
+}
+
+.headline em {
+	display: block;
+	color: var(--accent);
+	font-family: var(--font-display);
+	font-weight: 400;
+	font-size: 1.15em;
+	letter-spacing: -0.035em;
+	line-height: 1.08;
+	text-transform: none;
+}
+
+.stamp {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border: 1px solid var(--border-strong);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
 }
 
 h2 {

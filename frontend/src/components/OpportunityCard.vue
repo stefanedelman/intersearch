@@ -29,7 +29,7 @@ function hostOf(url: string) {
 </script>
 
 <template>
-	<article class="card opportunity">
+	<article :class="['card', 'opportunity', `opportunity-${item.section}`]">
 		<header class="head">
 			<span class="rank mono" :aria-label="`Rank ${item.rank}`">{{ rank }}</span>
 			<div class="titles">
@@ -106,6 +106,16 @@ function hostOf(url: string) {
 <style scoped>
 .opportunity {
 	gap: var(--space-4);
+	border-left: 3px solid var(--blue);
+}
+.opportunity-new {
+	border-left-color: #b9e9b0;
+}
+.opportunity-returned {
+	border-left-color: var(--pink);
+}
+.opportunity-new .badge-new {
+	transform: rotate(-2deg);
 }
 
 .opportunity:hover {
@@ -120,10 +130,15 @@ function hostOf(url: string) {
 }
 
 .rank {
+	display: grid;
+	place-items: center;
 	font-size: 13px;
-	color: var(--text-subtle);
-	padding-top: 3px;
-	min-width: 1.6rem;
+	color: var(--accent);
+	width: 32px;
+	height: 34px;
+	background: var(--accent-soft);
+	border: 1px solid rgba(245, 220, 82, 0.3);
+	box-shadow: 2px 2px 0 #000;
 }
 
 .titles {
@@ -137,7 +152,7 @@ function hostOf(url: string) {
 }
 
 .titles h3 {
-	font-size: 17px;
+	font-size: 19px;
 	font-weight: 600;
 	letter-spacing: -0.015em;
 	overflow-wrap: anywhere;
@@ -178,12 +193,11 @@ function hostOf(url: string) {
 
 .score-value {
 	display: block;
-	font-family: var(--font-display);
+	font-family: var(--font-sans);
+	font-weight: 700;
+	letter-spacing: -0.06em;
 	font-size: 2.6rem;
-	background: var(--white-gradient);
-	-webkit-background-clip: text;
-	background-clip: text;
-	color: transparent;
+	color: var(--accent);
 }
 
 .score-max {
@@ -210,8 +224,8 @@ function hostOf(url: string) {
 }
 
 .meter-track {
-	height: 4px;
-	border-radius: 999px;
+	height: 5px;
+	border-radius: 1px;
 	background: rgba(255, 255, 255, 0.07);
 	overflow: hidden;
 }
@@ -220,7 +234,7 @@ function hostOf(url: string) {
 	display: block;
 	height: 100%;
 	border-radius: inherit;
-	background: linear-gradient(90deg, rgba(255, 255, 255, 0.55), #ffffff);
+	background: var(--accent);
 }
 
 .meter-label {
@@ -309,8 +323,9 @@ function hostOf(url: string) {
 .source {
 	display: inline-flex;
 	align-items: center;
-	height: 24px;
-	padding: 0 9px;
+	min-height: 24px;
+	max-width: 100%;
+	padding: 3px 9px;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-pill);
 	font-size: 11.5px;

@@ -29,9 +29,10 @@ function signOut() {
 		<aside v-if="isSignedIn" class="sidebar">
 			<RouterLink to="/" class="brand" aria-label="Intersearch home">
 				<BrandMark />
-				<span>Intersearch</span>
+				<span>Intersearch<span class="brand-period">.</span></span>
 			</RouterLink>
 
+			<p class="eyebrow nav-caption">Research workspace</p>
 			<nav class="nav" aria-label="Main">
 				<RouterLink v-for="item in nav" :key="item.to" :to="item.to" :class="['nav-link', { active: item.match(route.path) }]" :aria-current="item.match(route.path) ? 'page' : undefined">
 					<svg v-if="item.icon === 'grid'" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
@@ -43,9 +44,11 @@ function signOut() {
 					<svg v-else viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
 						<circle cx="10" cy="7" r="3.2" /><path d="M4 17c.8-3 3.2-4.5 6-4.5s5.2 1.5 6 4.5" />
 					</svg>
-					<span>{{ item.label }}</span>
+					<span>{{ item.label }}</span><span class="nav-arrow" aria-hidden="true">↗</span>
 				</RouterLink>
 			</nav>
+
+			<div class="sidebar-note"><span aria-hidden="true">✳</span><p>Less searching.<br /><em>More possibility.</em></p><span class="eyebrow">The next step starts here.</span></div>
 
 			<div class="sidebar-foot">
 				<div class="who">
@@ -72,14 +75,14 @@ function signOut() {
 	isolation: isolate;
 }
 
-/* Soft light from above, like Resend's hero. */
+/* A restrained warm glow keeps depth in the dark workspace. */
 .glow {
 	position: fixed;
 	inset: -30vh -10vw auto;
 	height: 70vh;
 	z-index: -1;
 	pointer-events: none;
-	background: radial-gradient(60% 60% at 50% 0%, rgba(225, 242, 254, 0.09), rgba(0, 0, 0, 0) 70%);
+	background: radial-gradient(60% 60% at 50% 0%, rgba(245, 220, 82, 0.05), rgba(0, 0, 0, 0) 70%);
 }
 
 .shell-app .glow {
@@ -89,13 +92,14 @@ function signOut() {
 .sidebar {
 	position: fixed;
 	inset: 0 auto 0 0;
+	overflow-y: auto;
 	width: var(--sidebar-width);
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-6);
+	gap: var(--space-5);
 	padding: var(--space-5) var(--space-3);
 	border-right: 1px solid var(--border);
-	background: rgba(0, 0, 0, 0.6);
+	background: rgba(13, 14, 12, 0.95);
 	backdrop-filter: blur(12px);
 	z-index: 20;
 }
@@ -107,21 +111,21 @@ function signOut() {
 	padding: 0 var(--space-2);
 	color: var(--text);
 	font-weight: 600;
-	font-size: 15px;
-	letter-spacing: -0.01em;
+	font-size: 18px;
+	letter-spacing: -0.04em;
 	text-decoration: none;
 }
 
 .nav {
 	display: grid;
-	gap: 2px;
+	gap: 6px;
 }
 
 .nav-link {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 34px;
+	height: 42px;
 	padding: 0 var(--space-3);
 	border-radius: var(--radius-sm);
 	color: var(--text-muted);
@@ -146,13 +150,49 @@ function signOut() {
 }
 
 .nav-link.active {
-	color: var(--text);
-	background: var(--surface-strong);
-	box-shadow: inset 0 0 0 1px var(--border);
+	color: var(--ink);
+	background: var(--accent);
+	box-shadow: 3px 3px 0 #090a09, 4px 4px 0 rgba(245, 220, 82, 0.3);
+}
+
+.brand-period {
+	color: var(--accent);
+}
+.nav-caption {
+	padding: 12px 8px 0;
+	margin-bottom: -12px;
+	font-size: 9px;
+}
+.nav-arrow {
+	margin-left: auto;
+	opacity: 0;
+}
+.nav-link.active .nav-arrow {
+	opacity: 1;
+}
+.sidebar-note {
+	margin-top: auto;
+	padding: 24px 8px 8px;
+}
+.sidebar-note > span:first-child {
+	color: var(--accent);
+	font-size: 32px;
+}
+.sidebar-note p {
+	font-family: var(--font-display);
+	font-size: 25px;
+	line-height: 1.15;
+	margin: 10px 0 16px;
+}
+.sidebar-note em {
+	color: var(--text-muted);
+}
+.sidebar-note .eyebrow {
+	font-size: 8px;
 }
 
 .sidebar-foot {
-	margin-top: auto;
+	margin-top: 0;
 	display: grid;
 	gap: var(--space-2);
 	padding-top: var(--space-4);
@@ -211,6 +251,12 @@ function signOut() {
 }
 
 @media (max-width: 900px) {
+	.nav-caption, .sidebar-note {
+		display: none;
+	}
+	.nav-arrow {
+		display: none;
+	}
 	.sidebar {
 		position: sticky;
 		top: 0;
@@ -235,7 +281,10 @@ function signOut() {
 	}
 
 	.nav-link {
-		height: 32px;
+		height: 36px;
+		padding: 0 8px;
+		gap: 6px;
+		font-size: 12px;
 		white-space: nowrap;
 	}
 
