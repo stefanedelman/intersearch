@@ -41,7 +41,7 @@ npm run db:seed
 - `npm run db:migrate` applies the checked-in migrations. It is safe to re-run.
 - `npm run db:seed` creates or refreshes the grader account. It is safe to re-run.
 
-Then start both servers with one command (Ctrl-C stops both):
+Then start both servers with one command. This installs dependencies, opens the backend and frontend in separate Terminal windows, and opens the app in your browser. Stop each server with Ctrl-C in its Terminal window:
 
 ```bash
 ./start.sh
