@@ -2,7 +2,7 @@
 
 Last updated: **October 5, 2026 (America/New_York)**.
 
-**Status: core implementation complete enough for live validation; Assignment 1B submission is not complete.** The current code passes 73 unit tests and 22 integration tests, typechecks, and a production build. Real Supabase connectivity and `NYUgrader` login were verified. Successful research runs and the required submission evidence are still missing.
+**Status: core implementation complete enough for live validation; Assignment 1B submission is not complete.** The current code passes 74 unit tests and 22 integration tests, typechecks, and a production build. Real Supabase connectivity and `NYUgrader` login were verified. Successful research runs and the required submission evidence are still missing.
 
 This is the working completion checklist for [the build plan](INTERSEARCH_PLAN.md) and [Assignment 1B](<FNMS Fall 2026 Assignment 1B.pdf>). A checked implementation item means the code exists; it does not mean a genuine research run has demonstrated it. Unchecked items include remaining work, final verification, and user-owned submission actions. Optional features are separated at the end.
 
@@ -99,7 +99,7 @@ Token reservations are intentionally conservative and may stop a run with unused
 
 | Check | Latest verified result |
 | --- | --- |
-| Unit suite | 73 passed |
+| Unit suite | 74 passed |
 | Integration suite | 22 passed |
 | TypeScript checks | Backend and frontend passed |
 | Production build | Backend and frontend passed |

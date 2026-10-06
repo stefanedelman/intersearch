@@ -75,6 +75,18 @@ export function tokenPacingWaitMs(pacing: TokenPacing | null, promptBytes: numbe
 	return available >= needed ? 0 : Math.ceil(((needed - available) * 60_000) / limitTokens);
 }
 
+/**
+ * Groq rejects a malformed tool call only after generating it, so the request still drew its prompt
+ * and output ceiling from the bucket, but no rate-limit headers come back. Assume it did, so the
+ * next call is paced instead of hitting a 429.
+ */
+export function drainPacing(pacing: TokenPacing, promptBytes: number, maxOutputTokens: number, now: number): TokenPacing {
+	const { limitTokens, remainingTokens, observedAt } = pacing.rate;
+	const available = Math.min(limitTokens, remainingTokens + (Math.max(0, now - observedAt) * limitTokens) / 60_000);
+	const spent = Math.ceil((promptBytes * pacing.tokensPerByte * 11) / 10) + maxOutputTokens;
+	return { ...pacing, rate: { limitTokens, remainingTokens: Math.max(0, available - spent), observedAt: now } };
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function truncate(text: string, max: number) {
@@ -234,6 +246,7 @@ export async function runAgentLoop(input: {
 			}
 
 			if (!response) {
+				if (pacing) pacing = drainPacing(pacing, promptBytes, config.model.max_output_tokens, Date.now());
 				messages.push({ role: "user", content: "Your last tool call was malformed. Call exactly one tool with valid JSON arguments." });
 				continue;
 			}

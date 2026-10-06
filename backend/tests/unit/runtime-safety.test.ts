@@ -8,7 +8,7 @@ import { MockAgent } from "undici";
 import { Budget, BudgetExhausted } from "../../src/tracker/budget";
 import { parseConfig } from "../../src/tracker/config";
 import { guardedGet } from "../../src/tracker/fetch/transport";
-import { runAgentLoop, tokenPacingWaitMs } from "../../src/tracker/loop";
+import { drainPacing, runAgentLoop, tokenPacingWaitMs } from "../../src/tracker/loop";
 import { emptyMemory, policyFor, transportFor, type ToolContext } from "../../src/tracker/tools/context";
 import { fetchArticle } from "../../src/tracker/tools/fetch-article";
 import { listCompanyJobs } from "../../src/tracker/tools/list-jobs";
@@ -131,4 +131,12 @@ test("a tool whose own allowance is used up is withdrawn without ending the run"
 	assert.equal(outcome.status, "complete");
 	assert.equal(ctx.budget.snapshot.fetches, 0);
 	assert.equal(ctx.budget.snapshot.networkRequests, 2, "only the two model calls");
+});
+
+test("a rejected malformed tool call is treated as having used its tokens for pacing", () => {
+	const pacing = { rate: { limitTokens: 8000, remainingTokens: 8000, observedAt: 0 }, tokensPerByte: 0.25 };
+	const drained = drainPacing(pacing, 12_000, 1000, 0);
+	assert.equal(drained.rate.remainingTokens, 8000 - 4300);
+	// The next request of the same size must now wait for the bucket to refill.
+	assert.ok(tokenPacingWaitMs(drained, 12_000, 1000, 0) > 0);
 });

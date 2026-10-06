@@ -148,3 +148,9 @@ See [AGENT.md](../AGENT.md) section 1.
 **Choice:** run 1 and run 2 use `gpt-oss-20b`. The model only chooses what to list, fetch, and search, and when to finish; facts, quotes, and ranking come from code, so the smaller model does not lower report accuracy.
 
 **Tradeoff:** the smaller model wastes more steps on confused turns. It is cheaper at paid rates ($0.075 / $0.30 per million input/output tokens versus $0.15 / $0.60).
+
+## Retries need their own model-call headroom (2026-10-05)
+
+**Why:** the first `NYUgrader` run ended partial at `max_model_calls` (20/20). Late in the run, the model sent two malformed tool calls. Groq still charged their tokens against the per-minute bucket, but pacing updated only after successful calls, so the next requests drew per-minute 429s. Those retries used the remaining model calls before `finish`. Partial runs don't become the comparison baseline, so that run can't serve as run 1.
+
+**Choice:** after a malformed tool call, pacing assumes the request's prompt and output ceiling were spent. `max_model_calls` is 26, leaving 6 attempts for retries above the 20 steps.

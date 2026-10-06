@@ -48,7 +48,7 @@ tools:
 
 limits:
   max_steps: 20
-  max_model_calls: 20
+  max_model_calls: 26
   max_tool_calls: 30
   max_searches: 4
   max_fetches: 12

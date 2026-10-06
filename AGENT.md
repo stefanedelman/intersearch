@@ -147,7 +147,7 @@ These paths are covered by tests in `tests/integration/tracker-e2e.test.ts` and 
 
 | Resource | Per run (measured) | Configured cap per run | Provider free allowance |
 | --- | --- | --- | --- |
-| Groq model calls | [measure] | `max_model_calls: 20` | 30 requests/minute, 1,000 requests/day (free plan, `openai/gpt-oss-20b`; verified 2026-10-05) |
+| Groq model calls | [measure] | `max_model_calls: 26` | 30 requests/minute, 1,000 requests/day (free plan, `openai/gpt-oss-20b`; verified 2026-10-05) |
 | Groq tokens (in + out) | [measure] | `max_total_tokens: 100000` | 8,000 tokens/minute, 200,000 tokens/day (same) |
 | Tavily credits | [measure] | `max_search_credits: 4` | 1,000 credits/month (Researcher plan; verified 2026-10-05) |
 | Greenhouse requests | [measure] | part of `max_network_requests: 60` | public API, no key |
