@@ -235,9 +235,9 @@ export async function runAgentLoop(input: {
 					ctx.trace.record({ category: "budget", step: ctx.step, status: "retry", service: "api.groq.com", errorCode: error.failure, detail: { waitMs, retry: attemptNumber, message: error.message } });
 				},
 			).catch((error: unknown) => {
-				// Groq rejects a malformed tool call from the model with HTTP 400 tool_use_failed.
-				// That is a model output error, so it is fed back once instead of ending the run.
-				if (error instanceof ProviderError && error.failure === "bad_request" && /tool_use_failed|failed to call a function/i.test(error.message)) return null;
+				// Groq rejects malformed model output (tool_use_failed, output_parse_failed) with HTTP 400.
+				// That is a model output error, so it is fed back instead of ending the run.
+				if (error instanceof ProviderError && error.failure === "bad_request" && /malformed model output|failed to call a function/i.test(error.message)) return null;
 				throw error;
 			});
 

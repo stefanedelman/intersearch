@@ -154,3 +154,5 @@ See [AGENT.md](../AGENT.md) section 1.
 **Why:** the first `NYUgrader` run ended partial at `max_model_calls` (20/20). Late in the run, the model sent two malformed tool calls. Groq still charged their tokens against the per-minute bucket, but pacing updated only after successful calls, so the next requests drew per-minute 429s. Those retries used the remaining model calls before `finish`. Partial runs don't become the comparison baseline, so that run can't serve as run 1.
 
 **Choice:** after a malformed tool call, pacing assumes the request's prompt and output ceiling were spent. `max_model_calls` is 26, leaving 6 attempts for retries above the 20 steps.
+
+**Update:** the retried `NYUgrader` run 1 failed on a second form of malformed output: `output_parse_failed`, where Groq could not parse the model's text at all. All of the model's malformed outputs leaked gpt-oss channel markup (`<|channel|>commentary`) into a tool call. The wrapper now treats any Groq 400 that carries `failed_generation`, or the code `tool_use_failed` or `output_parse_failed`, as malformed model output to report back to the model, never as the end of the run.
