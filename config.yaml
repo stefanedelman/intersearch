@@ -21,14 +21,13 @@ preferences:
 
 model:
   provider: groq
-  id: openai/gpt-oss-20b
-  # OpenAI recommends temperature 1.0 for gpt-oss; at 0 it produced text-only turns and
-  # malformed tool calls. Ranking is done by code, so results stay deterministic given the evidence.
-  temperature: 1
+  id: qwen/qwen3.8-27b
+  # Ranking is done by code, so results stay deterministic given the evidence.
+  temperature: 0.7
   # Includes reasoning tokens. Groq charges this full ceiling against the per-minute token
   # limit (8K on the free tier) before generating, so keep it small.
   max_output_tokens: 1000
-  reasoning_effort: low
+  reasoning_effort: none
 
 instructions: |
   You research internships for the configured companies using only the provided tools.
@@ -47,13 +46,13 @@ tools:
   - finish
 
 limits:
-  max_steps: 20
+  max_steps: 14
   max_model_calls: 26
   max_tool_calls: 30
   max_searches: 4
   max_fetches: 12
   max_network_requests: 60
-  max_total_tokens: 100000
+  max_total_tokens: 150000
   max_search_credits: 4
   max_elapsed_seconds: 900
   max_retries: 2

@@ -2,8 +2,8 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
 
-// backend/.env is committed (throwaway course project only); backend/.env.local is ignored
-// and holds provider keys. Later files override earlier ones; real environment variables win over both.
+// backend/.env (course Supabase settings) and backend/.env.local (provider keys) are both local and
+// git-ignored. Later files override earlier ones; real environment variables win over both.
 const backendRoot = path.resolve(__dirname, "../..");
 const shellKeys = new Set(Object.keys(process.env));
 // Automated tests provide their own environment and must not pick up the course project's values.
