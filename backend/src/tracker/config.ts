@@ -100,6 +100,8 @@ export const trackerConfigSchema = z
 				id: z.string().min(1).max(100),
 				temperature: z.number().min(0).max(1),
 				max_output_tokens: z.number().int().min(100).max(4000),
+				// Reasoning models spend output tokens on hidden reasoning; this bounds how much.
+				reasoning_effort: z.enum(["none", "default", "low", "medium", "high"]).optional(),
 			})
 			.strict(),
 		instructions: z.string().min(20).max(4000),

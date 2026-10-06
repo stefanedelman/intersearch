@@ -57,7 +57,7 @@ const definitions: Record<ToolName, ModelTool> = {
 		type: "function",
 		function: {
 			name: "finish",
-			description: "End the research. List the fetched postings you consider the best matches (by source_id). Optionally give a short reason with a supporting quote copied exactly from that posting. Code ranks and writes the report.",
+			description: "End the research. List the fetched postings you consider the best matches (by source_id). Optionally select a quote copied exactly from that posting. Do not add any interpretation or factual claim. Code ranks and writes the report.",
 			parameters: {
 				type: "object",
 				properties: {
@@ -68,8 +68,7 @@ const definitions: Record<ToolName, ModelTool> = {
 							type: "object",
 							properties: {
 								source_id: { type: "string" },
-								reason: { type: "string", description: "One short sentence on why it fits." },
-								supporting_quote: { type: "string", description: "Exact words copied from the posting that support the reason." },
+								supporting_quote: { type: "string", description: "Exact words copied from the posting, with no added claims." },
 							},
 							required: ["source_id"],
 							additionalProperties: false,

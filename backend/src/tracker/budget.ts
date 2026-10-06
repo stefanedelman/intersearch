@@ -95,10 +95,10 @@ export class Budget {
 	reserveModelCall(estimatedInputTokens: number, maxOutputTokens: number): number {
 		this.checkDeadline();
 		this.ensure(this.totals.modelCalls < this.limits.max_model_calls, "max_model_calls", `${this.totals.modelCalls}/${this.limits.max_model_calls}`);
-		this.reserveNetwork();
 		const reservation = estimatedInputTokens + maxOutputTokens;
 		const used = this.totals.inputTokens + this.totals.outputTokens + this.totals.reservedTokens;
 		this.ensure(used + reservation <= this.limits.max_total_tokens, "max_total_tokens", `${used} used + ${reservation} needed > ${this.limits.max_total_tokens}`);
+		this.reserveNetwork();
 		this.totals.modelCalls += 1;
 		this.totals.reservedTokens += reservation;
 		return reservation;
@@ -133,11 +133,6 @@ export class Budget {
 	reserveNetwork(count = 1) {
 		this.checkDeadline();
 		this.ensure(this.totals.networkRequests + count <= this.limits.max_network_requests, "max_network_requests", `${this.totals.networkRequests}/${this.limits.max_network_requests}`);
-		this.totals.networkRequests += count;
-	}
-
-	/** Redirect hops are extra round trips; they are charged after the fact but still count. */
-	chargeExtraNetwork(count: number) {
 		this.totals.networkRequests += count;
 	}
 

@@ -1,6 +1,6 @@
 // TEST DATA ONLY. A fictional company ("Acme") served by a fake transport so tracker tests run
 // without network access. Never copy these into reports/ or present them as real findings.
-import type { FetchResult } from "../../src/tracker/fetch/transport";
+import type { FetchResult, guardedGet } from "../../src/tracker/fetch/transport";
 
 const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
 
@@ -119,7 +119,7 @@ export function createAcmeFetcher(initialJobIds: number[]) {
 	const requests: string[] = [];
 	const ok = (url: string, body: string, contentType: string): FetchResult => ({ ok: true, status: 200, finalUrl: url, contentType, body, bytes: body.length, redirects: 0, latencyMs: 5 });
 
-	const fetcher = async (url: string): Promise<FetchResult> => {
+	const responseFor = async (url: string): Promise<FetchResult> => {
 		requests.push(url);
 		const parsed = new URL(url);
 		if (url === "https://boards-api.greenhouse.io/v1/boards/acme/jobs") {
@@ -137,7 +137,13 @@ export function createAcmeFetcher(initialJobIds: number[]) {
 	};
 
 	return {
-		fetcher,
+		fetcher: (async (url, _policy, _limits, options = {}) => {
+			options.beforeRequest?.(url);
+			const startedAt = new Date();
+			const result = await responseFor(url);
+			options.onRoundTrip?.({ url, startedAt, latencyMs: result.latencyMs, status: result.status ?? "network_error", errorCode: result.ok ? null : result.code, redirectHop: 0 });
+			return result;
+		}) satisfies typeof guardedGet,
 		requests,
 		setListed(ids: number[]) {
 			listed = [...ids];

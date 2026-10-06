@@ -8,6 +8,9 @@ import { startTestDatabase } from "../helpers/test-db";
 import { createFakeAuthProvider } from "../helpers/fake-auth-provider";
 import { fetchedSourceIds, scriptedModel } from "../helpers/scripted-model";
 import { ACME_CONFIG_YAML, createAcmeFetcher, EVIL_URL } from "../fixtures/acme";
+import { ApiUnavailable, type ApiRoundTrip } from "../../src/tracker/api-client";
+import { createApiTraceRecorder } from "../../src/tracker/trace";
+import { randomUUID } from "node:crypto";
 
 process.env.APP_ENV = "test";
 process.env.SUPABASE_URL ??= "http://127.0.0.1:54321";
@@ -28,9 +31,9 @@ let modules: {
 	ProviderError: typeof import("../../src/tracker/failure").ProviderError;
 };
 
-async function newApi(username: string) {
+async function newApi(username: string, onRoundTrip?: (trip: ApiRoundTrip) => void) {
 	await fetch(`${baseUrl}/api/auth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: "secret123" }) });
-	const api = new modules.TrackerApi(baseUrl);
+	const api = new modules.TrackerApi(baseUrl, onRoundTrip);
 	await api.login(username, "secret123");
 	return api;
 }
@@ -83,8 +86,8 @@ describe("tracker end to end (scripted model, fixture transport, real API + data
 					const ids = fetchedSourceIds(messages);
 					return {
 						candidates: [
-							{ source_id: ids.get(DETAIL(1001)), reason: "Backend role in New York", supporting_quote: "Build and scale backend services that process payments for millions of users." },
-							{ source_id: ids.get(DETAIL(1003)), reason: "made-up claim", supporting_quote: "This quote is not in the posting." },
+							{ source_id: ids.get(DETAIL(1001)), supporting_quote: "Build and scale backend services that process payments for millions of users." },
+							{ source_id: ids.get(DETAIL(1003)), supporting_quote: "This quote is not in the posting." },
 						],
 					};
 				},
@@ -112,8 +115,8 @@ describe("tracker end to end (scripted model, fixture transport, real API + data
 		assert.ok(report.items.every((item) => item.section === "new"), "first run: everything is new");
 		assert.ok(!report.items.some((item) => /London/.test(item.locations.join())), "London role excluded by location");
 		assert.ok(!report.items.some((item) => /img|evil/i.test(item.title)), "injection page is not an internship match");
-		assert.equal(report.items[0]!.agentNote?.reason, "Backend role in New York");
-		assert.ok(!report.items.some((item) => item.agentNote?.reason === "made-up claim"), "unsupported model note dropped");
+		assert.equal(report.items[0]!.agentNote?.quote, "Build and scale backend services that process payments for millions of users.");
+		assert.ok(!report.items.some((item) => item.agentNote?.quote === "This quote is not in the posting."), "unsupported model note dropped");
 		assert.match(report.items[0]!.summary, /\$52 per hour/);
 
 		// Every cited quote exists in its stored source (the API also enforced this at finalize).
@@ -227,5 +230,78 @@ describe("tracker end to end (scripted model, fixture transport, real API + data
 		await assert.rejects(other.report(run1Id), (error: { status?: number }) => error.status === 404);
 		const state = await other.state();
 		assert.equal(state.opportunities.length, 0);
+	});
+
+	test("network cut while loading state leaves a partial report and can be synced", async () => {
+		const client = await newApi("state-outage");
+		const loadState = client.state.bind(client);
+		const checkpoint = client.checkpoint.bind(client);
+		client.state = async () => { throw new ApiUnavailable("Simulated state network cut"); };
+		client.checkpoint = async () => { throw new ApiUnavailable("Simulated upload network cut"); };
+		const model = scriptedModel([{ tool: "finish", args: { candidates: [] } }]);
+		const result = await modules.executeRun({ config: modules.parseConfig(ACME_CONFIG_YAML), api: client, callModel: model.callModel, search: null, log });
+		assert.equal(model.calls.length, 0);
+		assert.equal(result.outcome.status, "partial");
+		assert.equal(result.uploaded, false);
+		assert.match(fs.readFileSync(result.reportPath, "utf8"), /partial/);
+		assert.match(fs.readFileSync(result.tracePath, "utf8"), /api_unavailable/);
+		assert.ok(result.body.report.notes.some(note => /Previous state could not be loaded/.test(note)));
+		client.state = loadState;
+		client.checkpoint = checkpoint;
+		const pending = JSON.parse(fs.readFileSync(path.join(path.dirname(result.reportPath), "pending.json"), "utf8"));
+		await client.checkpoint(result.runId, pending);
+		await client.finalize(result.runId, result.body);
+		assert.equal((await client.report(result.runId)).report.status, "partial");
+		assert.equal((await client.state()).baseline, null);
+	});
+
+	test("mid-run network cut preserves gathered evidence locally through bounded retries", async () => {
+		const client = await newApi("mid-run-outage");
+		client.checkpoint = async () => { throw new ApiUnavailable("Simulated upload network cut"); };
+		const model = scriptedModel([
+			{ tool: "fetch_article", args: { url: DETAIL(1001) } },
+			{ error: new modules.ProviderError("groq", "transient", "Simulated provider network cut") },
+		]);
+		const result = await modules.executeRun({ config: modules.parseConfig(ACME_CONFIG_YAML), api: client, callModel: model.callModel, search: null, log, fetcher: createAcmeFetcher([1001]).fetcher });
+		assert.equal(result.outcome.status, "partial");
+		assert.equal(result.uploaded, false);
+		assert.equal(model.calls.length, 3, "one successful call and two bounded failed attempts");
+		assert.equal(result.body.report.items.length, 1);
+		assert.match(fs.readFileSync(result.reportPath, "utf8"), /\$52 per hour/);
+		const pending = JSON.parse(fs.readFileSync(path.join(path.dirname(result.reportPath), "pending.json"), "utf8"));
+		assert.equal(pending.documents.length, 1);
+	});
+
+	test("trace includes login, config import, run creation and finalization with real start times", async () => {
+		const recorder = createApiTraceRecorder();
+		const client = await newApi("trace-startup", recorder.record);
+		const model = scriptedModel([{ tool: "finish", args: { candidates: [] } }]);
+		const result = await modules.executeRun({ config: modules.parseConfig(ACME_CONFIG_YAML), api: client, callModel: model.callModel, search: null, log, onTrace: recorder.attach });
+		const events = fs.readFileSync(result.tracePath, "utf8").trim().split("\n").map(line => JSON.parse(line));
+		const trips = events.filter(event => event.category === "api");
+		assert.deepEqual(trips.slice(0, 3).map(event => event.arguments.path), ["/api/auth/login", "/api/tracker/config", "/api/tracker/runs"]);
+		assert.ok(trips.some(event => /finalize$/.test(event.arguments.path)));
+		assert.ok(events.every(event => !(event.arguments && ("password" in event.arguments || "token" in event.arguments))));
+		const modelEvent = events.find(event => event.category === "model");
+		assert.ok(trips.slice(0, 3).every(event => Date.parse(event.startedAt) + event.latencyMs <= Date.parse(modelEvent.startedAt)));
+		const finish = events.find(event => event.category === "tool" && event.tool === "finish");
+		assert.equal(typeof finish.latencyMs, "number");
+	});
+
+	test("finalize API rejects a fabricated note reason and rejects an invented quote", async () => {
+		const client = await newApi("quote-validation");
+		const model = scriptedModel([{ tool: "fetch_article", args: { url: DETAIL(1001) } }, { tool: "finish", args: { candidates: [] } }]);
+		const result = await modules.executeRun({ config: modules.parseConfig(ACME_CONFIG_YAML), api: client, callModel: model.callModel, search: null, log, fetcher: createAcmeFetcher([1001]).fetcher });
+		const started = await client.startRun(randomUUID());
+		const body = structuredClone(result.body);
+		body.report.runId = started.runId;
+		body.report.items[0]!.agentNote = { quote: "Build and scale backend services that process payments for millions of users." };
+		Object.assign(body.report.items[0]!.agentNote, { reason: "This internship pays $1 million per year." });
+		await assert.rejects(client.finalize(started.runId, body), (error: { status?: number }) => error.status === 400);
+		body.report.items[0]!.agentNote = { quote: "This internship pays $1 million per year." };
+		await assert.rejects(client.finalize(started.runId, body), (error: { status?: number }) => error.status === 400);
+		body.report.items[0]!.agentNote = { quote: "Build and scale backend services that process payments for millions of users." };
+		await client.finalize(started.runId, body);
+		assert.deepEqual((await client.report(started.runId)).report.items[0]!.agentNote, body.report.items[0]!.agentNote);
 	});
 });

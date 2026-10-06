@@ -7,6 +7,8 @@ Intended GitHub repository name: `intersearch`
 
 ## 0. Implementation status (updated 2026-09-28)
 
+**Runtime audit fixes (2026-10-05):** state-loading outages after run creation now save a partial report; request budgets are reserved before each source redirect hop (including feeds); token reservations use UTF-8 bytes plus template headroom; optional model notes are quote-only; API startup timings and individual source hops are traced. Regression coverage includes startup/mid-run outages, later sync, redirect caps, unsupported claims, and round-trip accounting. Genuine run evidence and measured AGENT.md sections remain pending.
+
 **Environment policy update (2026-09-28):** `backend/.env` is local and ignored, and has been removed from local Git history at the user's request. This supersedes all instructions below to commit course credentials or expect them in a fresh clone. Copy `backend/.env.example` to `backend/.env` and configure the dedicated course Supabase project before setup and migrations. Only placeholder environment examples belong in Git.
 
 **Built and verified locally** (61 unit + 18 integration tests pass; `npm run build` passes; `npm run verify` 29/29 against a local preview backend that uses fake auth):
@@ -32,7 +34,7 @@ Intended GitHub repository name: `intersearch`
 
 **Changes made while building** (these supersede the sections below):
 
-- **Facts are extracted by code, not the model.** Each fact is a verbatim quote cut from the stored page (`domain/facts.ts`). The model chooses what to fetch, when to stop, and may add a note backed by a quote. Code ranks everything observed plus carried-forward developments. The API re-validates every quote against stored text at finalize.
+- **Facts are extracted by code, not the model.** Each fact is a verbatim quote cut from the stored page (`domain/facts.ts`). The model chooses what to fetch, when to stop, and may select a verbatim source quote. Free-form model notes are rejected; fit explanations come from code. Code ranks everything observed plus carried-forward developments. The API re-validates every quote against stored text at finalize.
 - **Schema additions:**
   - `SourceDocument.metadata`: structured job-board fields, so cached pages keep their job id, location, and update date.
   - `TraceEvent.service` and `TraceEvent.detail`: per-service round-trip counts.

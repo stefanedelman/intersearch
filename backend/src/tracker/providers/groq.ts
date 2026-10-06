@@ -11,7 +11,18 @@ export type ModelResponse = {
 	usage: { input: number; output: number } | null;
 	finishReason: string | null;
 	requestId: string | null;
+	/** Groq's per-minute token bucket as of this response, from its x-ratelimit headers. */
+	rateLimit?: RateLimitSnapshot | null;
 };
+
+export type RateLimitSnapshot = { limitTokens: number; remainingTokens: number; observedAt: number };
+
+function readRateLimit(headers: Headers): RateLimitSnapshot | null {
+	const limitTokens = Number(headers.get("x-ratelimit-limit-tokens"));
+	const remainingTokens = Number(headers.get("x-ratelimit-remaining-tokens"));
+	if (!headers.has("x-ratelimit-limit-tokens") || !Number.isFinite(limitTokens) || limitTokens <= 0 || !Number.isFinite(remainingTokens)) return null;
+	return { limitTokens, remainingTokens, observedAt: Date.now() };
+}
 
 /**
  * One model request, no hidden retries: the SDK's own retry loop is disabled so our wrapper
@@ -29,6 +40,7 @@ export function createGroqModel(apiKey: string | undefined, timeoutMs: number) {
 		tools: ModelTool[];
 		temperature: number;
 		maxOutputTokens: number;
+		reasoningEffort?: "none" | "default" | "low" | "medium" | "high";
 	}): Promise<ModelResponse> {
 		try {
 			const { data, response } = await client.chat.completions
@@ -40,6 +52,7 @@ export function createGroqModel(apiKey: string | undefined, timeoutMs: number) {
 					parallel_tool_calls: false,
 					temperature: input.temperature,
 					max_completion_tokens: input.maxOutputTokens,
+					...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
 				})
 				.withResponse();
 			const choice = data.choices[0];
@@ -49,6 +62,7 @@ export function createGroqModel(apiKey: string | undefined, timeoutMs: number) {
 				usage: data.usage ? { input: data.usage.prompt_tokens ?? 0, output: data.usage.completion_tokens ?? 0 } : null,
 				finishReason: choice?.finish_reason ?? null,
 				requestId: response.headers.get("x-request-id"),
+				rateLimit: readRateLimit(response.headers),
 			};
 		} catch (error) {
 			if (error instanceof Groq.APIConnectionError || error instanceof Groq.APIConnectionTimeoutError) {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { redact } from "../lib/logger";
+import type { ApiRoundTrip } from "./api-client";
 
 export type TraceCategory = "run" | "model" | "tool" | "http" | "api" | "budget";
 
@@ -36,8 +37,8 @@ type EventInput = Partial<Omit<TraceEvent, "runId" | "startedAt" | "category" | 
  * line, appended to the local run folder immediately (so it survives crashes and outages) and
  * queued for upload to the API. Arguments and details are redacted before they are written.
  *
- * Counting convention for network round trips: only `http` events are round trips; `model` and
- * `tool` events are the logical operations that contain them, linked by parentEventId.
+ * Each `http`, `model`, or `api` event is one attempted round trip. Each source redirect hop
+ * has its own `http` event. `tool` spans wrap these events and must not be counted again.
  */
 export class Trace {
 	private readonly file: string;
@@ -80,7 +81,7 @@ export class Trace {
 
 	/** Times an async operation and records it, success or failure. */
 	async span<T>(input: Omit<EventInput, "status" | "latencyMs">, run: (eventId: string) => Promise<T>, describe?: (result: T) => Partial<EventInput>): Promise<T> {
-		const eventId = randomUUID();
+		const eventId = input.eventId ?? randomUUID();
 		const startedAt = new Date();
 		try {
 			const result = await run(eventId);
@@ -115,4 +116,29 @@ export class Trace {
 	get path() {
 		return this.file;
 	}
+}
+
+/** Buffer login/config/start timings until the server returns the run id. Never buffer bodies. */
+export function createApiTraceRecorder() {
+	let trace: Trace | null = null;
+	let pending: ApiRoundTrip[] = [];
+	const record = (trip: ApiRoundTrip) => {
+		if (!trace) {
+			pending.push(trip);
+			return;
+		}
+		trace.record({
+			category: "api", service: "intersearch-api", startedAt: trip.startedAt,
+			arguments: { method: trip.method, path: trip.path.replace(/[0-9a-f-]{36}/g, ":id"), attempt: trip.attempt },
+			status: String(trip.status), latencyMs: trip.latencyMs,
+		});
+	};
+	return {
+		record,
+		attach(created: Trace) {
+			trace = created;
+			pending.forEach(record);
+			pending = [];
+		},
+	};
 }

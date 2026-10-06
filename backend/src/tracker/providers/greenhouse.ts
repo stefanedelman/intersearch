@@ -1,5 +1,5 @@
 import { parseLenientJson } from "../fetch/extract";
-import { guardedGet, type TransportLimits } from "../fetch/transport";
+import { guardedGet, type TransportLimits, type TransportOptions } from "../fetch/transport";
 import type { UrlPolicy } from "../fetch/url-policy";
 
 export type JobListing = {
@@ -25,9 +25,9 @@ export function jobDetailUrl(boardToken: string, jobId: string) {
  * Greenhouse's public Job Board API (no key required). The URL is built from a configured
  * board token only, never from model input, and fetched through the same guarded transport.
  */
-export async function listGreenhouseJobs(boardToken: string, policy: UrlPolicy, limits: TransportLimits, fetcher: typeof guardedGet = guardedGet) {
+export async function listGreenhouseJobs(boardToken: string, policy: UrlPolicy, limits: TransportLimits, fetcher: typeof guardedGet = guardedGet, options: TransportOptions = {}) {
 	const url = boardFeedUrl(boardToken);
-	const result = await fetcher(url, policy, limits, { accept: "application/json" });
+	const result = await fetcher(url, policy, limits, { ...options, accept: "application/json" });
 	if (!result.ok) return { ok: false as const, url, result };
 
 	let parsed: { jobs?: unknown[] };

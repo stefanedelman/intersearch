@@ -216,3 +216,11 @@ describe("redaction keeps usage counters", () => {
 		assert.equal(out.token, "[REDACTED]");
 	});
 });
+
+test("a generic careers page title never becomes an empty title quote", () => {
+	const html = "<html><head><title>Acme Careers</title></head><body><h1>Software Engineering Intern, Summer 2027</h1><p>Build backend services in New York.</p></body></html>";
+	const url = "https://careers.acme.example/jobs/77";
+	const observation = extractObservation({ extracted: extract(html, "text/html", url, 16000), url, finalUrl: url, sourceDocumentId: docId, fetchedAt: new Date().toISOString(), config });
+	assert.ok(observation.evidence.every((item) => item.quote.trim().length > 0), "no empty quotes");
+	assert.match(observation.facts.title, /Software Engineering Intern/);
+});

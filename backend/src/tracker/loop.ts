@@ -1,8 +1,8 @@
 import type { TrackerStateDto } from "../contracts/tracker";
 import { Budget, BudgetExhausted } from "./budget";
-import type { TrackerConfig } from "./config";
+import type { ToolName, TrackerConfig } from "./config";
 import { ProviderError, withRetries } from "./failure";
-import type { CallModel, ModelMessage } from "./providers/groq";
+import type { CallModel, ModelMessage, RateLimitSnapshot } from "./providers/groq";
 import type { ToolContext } from "./tools/context";
 import { fetchArticle, fetchResultForModel } from "./tools/fetch-article";
 import { validateFinish, type AcceptedNote, type FinishArgs } from "./tools/finish";
@@ -18,8 +18,10 @@ export type LoopOutcome = {
 };
 
 const MAX_TOOL_RESULT_CHARS = 3000;
-const KEEP_FULL_TOOL_RESULTS = 4;
+const KEEP_FULL_TOOL_RESULTS = 2;
 const MAX_NO_TOOL_REPLIES = 2;
+// Limits on one tool's usage. Reaching one removes that tool; the run continues with the others.
+const PER_TOOL_LIMITS = new Set<string>(["max_searches", "max_search_credits", "max_fetches"]);
 
 function systemPrompt(config: TrackerConfig, state: TrackerStateDto | null, everReportedTitles: string[]): string {
 	const p = config.preferences;
@@ -48,10 +50,32 @@ function systemPrompt(config: TrackerConfig, state: TrackerStateDto | null, ever
 	return lines.join("\n");
 }
 
-function estimateTokens(messages: ModelMessage[], toolsJson: string): number {
-	// Conservative: ~3 characters per token (typical English is closer to 4), plus overhead.
-	return Math.ceil((JSON.stringify(messages).length + toolsJson.length) / 3) + 64;
+export function reserveInputTokens(messages: ModelMessage[], toolsJson: string): number {
+	// Byte-level tokenizers can use one token per UTF-8 byte. Reserve the entire serialized
+	// payload, plus headroom for the provider's chat/tool template (not present in our JSON).
+	// This intentionally overestimates English rather than relying on an average chars/token.
+	return Buffer.byteLength(JSON.stringify(messages) + toolsJson, "utf8") + 2048 + 256 * messages.length;
 }
+
+export type TokenPacing = { rate: RateLimitSnapshot; tokensPerByte: number };
+
+/**
+ * Groq charges each request its prompt plus the full max_completion_tokens against a per-minute
+ * token bucket that refills continuously (limit / 60 per second). On the free tier (8K TPM) one
+ * request can use most of the bucket, so before each call we wait until the bucket reported by the
+ * last response has refilled enough. The prompt estimate is calibrated on the last call's actual
+ * prompt tokens per byte; it is only for pacing. Budgets still use the byte reservation, and an
+ * underestimate just causes a per-minute 429 that the retry path waits out.
+ */
+export function tokenPacingWaitMs(pacing: TokenPacing | null, promptBytes: number, maxOutputTokens: number, now: number): number {
+	if (!pacing) return 0;
+	const { limitTokens, remainingTokens, observedAt } = pacing.rate;
+	const needed = Math.min(limitTokens, Math.ceil((promptBytes * pacing.tokensPerByte * 11) / 10) + maxOutputTokens);
+	const available = Math.min(limitTokens, remainingTokens + (Math.max(0, now - observedAt) * limitTokens) / 60_000);
+	return available >= needed ? 0 : Math.ceil(((needed - available) * 60_000) / limitTokens);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function truncate(text: string, max: number) {
 	return text.length > max ? `${text.slice(0, max)}…[truncated]` : text;
@@ -99,8 +123,6 @@ export async function runAgentLoop(input: {
 }): Promise<LoopOutcome> {
 	const { config, ctx, callModel, log } = input;
 	const budget: Budget = ctx.budget;
-	const tools = toolDefinitions(config.tools);
-	const toolsJson = JSON.stringify(tools);
 	const everReportedTitles = (input.state?.opportunities ?? []).filter((opportunity) => opportunity.firstReportedAt).map((opportunity) => `${opportunity.companyName} — ${opportunity.title}`);
 
 	const messages: ModelMessage[] = [
@@ -109,6 +131,7 @@ export async function runAgentLoop(input: {
 	];
 	const toolMessageIndexes: { index: number; short: string }[] = [];
 	let noToolReplies = 0;
+	let pacing: TokenPacing | null = null;
 
 	const compactOldToolResults = () => {
 		const stale = toolMessageIndexes.slice(0, Math.max(0, toolMessageIndexes.length - KEEP_FULL_TOOL_RESULTS));
@@ -122,14 +145,40 @@ export async function runAgentLoop(input: {
 			ctx.step = budget.snapshot.steps;
 			compactOldToolResults();
 
+			// On the last step the budget allows, only finish is offered, so the run ends with the
+			// model's own selection instead of being cut off mid-research. Tools whose own allowance
+			// is used up are not offered either.
+			const totals = budget.snapshot;
+			const lastStep = totals.steps >= config.limits.max_steps || totals.modelCalls + 1 >= config.limits.max_model_calls;
+			const searchesLeft = totals.searches < config.limits.max_searches && totals.searchCredits < config.limits.max_search_credits;
+			const enabledTools: ToolName[] = lastStep
+				? ["finish"]
+				: config.tools.filter((name) => (name !== "search_web" || searchesLeft) && (name !== "fetch_article" || totals.fetches < config.limits.max_fetches));
+			const tools = toolDefinitions(enabledTools);
+			const toolsJson = JSON.stringify(tools);
+			if (lastStep) {
+				messages.push({ role: "user", content: "This is your last step. Call finish now with the best postings you fetched in this run." });
+			}
+
+			const promptBytes = Buffer.byteLength(JSON.stringify(messages) + toolsJson, "utf8");
+			const paceMs = tokenPacingWaitMs(pacing, promptBytes, config.model.max_output_tokens, Date.now());
+			if (paceMs > 0) {
+				if (paceMs >= budget.remainingMs() - 1000) {
+					throw new BudgetExhausted("max_elapsed_seconds", `waiting ${Math.round(paceMs / 1000)}s for the model's per-minute token limit would exceed the run's time budget`);
+				}
+				log(`  waiting ${Math.round(paceMs / 1000)}s for the model's per-minute token limit`);
+				ctx.trace.record({ category: "budget", step: ctx.step, status: "rate_wait", service: "api.groq.com", detail: { waitMs: paceMs, remainingTokens: pacing?.rate.remainingTokens, limitTokens: pacing?.rate.limitTokens } });
+				await sleep(paceMs);
+			}
+
 			const response = await withRetries(
 				budget,
 				config.limits.max_retries,
 				async (attempt) => {
-					const reservation = budget.reserveModelCall(estimateTokens(messages, toolsJson), config.model.max_output_tokens);
+					const reservation = budget.reserveModelCall(reserveInputTokens(messages, toolsJson), config.model.max_output_tokens);
 					const started = new Date();
 					try {
-						const result = await callModel({ model: config.model.id, messages, tools, temperature: config.model.temperature, maxOutputTokens: config.model.max_output_tokens });
+						const result = await callModel({ model: config.model.id, messages, tools, temperature: config.model.temperature, maxOutputTokens: config.model.max_output_tokens, reasoningEffort: config.model.reasoning_effort });
 						budget.settleModelCall(reservation, result.usage);
 						ctx.trace.record({
 							category: "model",
@@ -174,6 +223,10 @@ export async function runAgentLoop(input: {
 				throw error;
 			});
 
+			if (response?.rateLimit && response.usage && response.usage.input > 0) {
+				pacing = { rate: response.rateLimit, tokensPerByte: response.usage.input / promptBytes };
+			}
+
 			if (!response) {
 				messages.push({ role: "user", content: "Your last tool call was malformed. Call exactly one tool with valid JSON arguments." });
 				continue;
@@ -203,7 +256,7 @@ export async function runAgentLoop(input: {
 					messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: "Only one tool call per turn is executed. Call it again next turn if still needed." }) });
 					continue;
 				}
-				const parsed = parseToolCall(config.tools, call.name, call.arguments);
+				const parsed = parseToolCall(enabledTools, call.name, call.arguments);
 				if (!parsed.ok) {
 					budget.beginToolCall();
 					ctx.trace.record({ category: "tool", step: ctx.step, tool: call.name.slice(0, 60), arguments: { raw: call.arguments.slice(0, 500) }, status: "invalid", errorCode: "invalid_tool_call", detail: { error: parsed.error } });
@@ -216,9 +269,10 @@ export async function runAgentLoop(input: {
 
 				if (parsed.name === "finish") {
 					const finishArgs = parsed.args as FinishArgs;
+					const startedAt = new Date();
 					const verdict = validateFinish(ctx.memory, finishArgs, (id) => ctx.store?.getById(id)?.text ?? null);
-					ctx.trace.record({ category: "tool", step: ctx.step, tool: "finish", arguments: { candidates: finishArgs.candidates.length }, status: verdict.ok ? "ok" : "invalid", detail: { errors: verdict.errors, acceptedNotes: verdict.notes.length, droppedNotes: verdict.droppedNotes } });
-					if (!verdict.ok && ctx.memory.observations.size > 0) {
+					ctx.trace.record({ category: "tool", step: ctx.step, tool: "finish", arguments: finishArgs, startedAt, latencyMs: Date.now() - startedAt.getTime(), status: verdict.ok ? "ok" : "invalid", detail: { errors: verdict.errors, acceptedNotes: verdict.notes.length, droppedNotes: verdict.droppedNotes } });
+					if (!verdict.ok) {
 						messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: "finish rejected", problems: verdict.errors, hint: "Use source_id values returned by fetch_article in this run." }) });
 						continue;
 					}
@@ -227,7 +281,7 @@ export async function runAgentLoop(input: {
 
 				const toolEventId = crypto.randomUUID();
 				ctx.parentEventId = toolEventId;
-				const result = await ctx.trace.span({ eventId: toolEventId, category: "tool", step: ctx.step, tool: parsed.name, arguments: parsed.args }, async () => {
+				const runTool = () => ctx.trace.span({ eventId: toolEventId, category: "tool", step: ctx.step, tool: parsed.name, arguments: parsed.args }, async () => {
 					switch (parsed.name) {
 						case "fetch_article": {
 							const outcome = await fetchArticle(ctx, parsed.args.url as string);
@@ -243,6 +297,11 @@ export async function runAgentLoop(input: {
 							return { forModel: { error: "unsupported tool" }, status: "error" };
 					}
 				}, (outcome) => ({ detail: { resultStatus: outcome.status } }));
+				const result = await runTool().catch((error: unknown) => {
+					if (!(error instanceof BudgetExhausted) || !PER_TOOL_LIMITS.has(error.limit)) throw error;
+					ctx.trace.record({ category: "budget", step: ctx.step, status: "exhausted", errorCode: error.limit, detail: { message: error.message, tool: parsed.name } });
+					return { forModel: { error: `${error.limit} reached, so ${parsed.name} is no longer available. Use the other tools or call finish.` }, status: "error" };
+				});
 				ctx.parentEventId = null;
 
 				const content = truncate(JSON.stringify({ tool: parsed.name, untrusted_web_data: result.forModel }), MAX_TOOL_RESULT_CHARS);

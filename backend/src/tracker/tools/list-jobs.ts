@@ -1,6 +1,7 @@
 import { canonicalizeUrl, identityFor } from "../domain/normalize";
 import { isInternshipTitle, listGreenhouseJobs } from "../providers/greenhouse";
 import type { ToolContext } from "./context";
+import { sourceTransport } from "./source-transport";
 
 const MAX_LISTINGS_FOR_MODEL = 20;
 
@@ -25,22 +26,7 @@ export async function listCompanyJobs(ctx: ToolContext, companyId: string) {
 		return { ok: false as const, error: `${company.name} has no job-board feed; use search_web instead.` };
 	}
 
-	ctx.budget.reserveNetwork();
-	const started = new Date();
-	const feed = await listGreenhouseJobs(company.board_token, ctx.policy, ctx.transport, ctx.fetcher);
-	ctx.trace.record({
-		category: "http",
-		service: "boards-api.greenhouse.io",
-		tool: "list_company_jobs",
-		step: ctx.step,
-		parentEventId: ctx.parentEventId,
-		arguments: { company_id: companyId },
-		status: feed.ok ? "ok" : "error",
-		startedAt: started,
-		latencyMs: feed.ok ? feed.latencyMs : feed.result.latencyMs,
-		errorCode: feed.ok ? null : feed.result.ok ? null : feed.result.code,
-		detail: feed.ok ? { jobs: feed.jobs.length, bytes: feed.bytes } : { reason: feed.result.ok ? null : feed.result.reason },
-	});
+	const feed = await listGreenhouseJobs(company.board_token, ctx.policy, ctx.transport, ctx.fetcher, sourceTransport(ctx, "list_company_jobs", { company_id: companyId }));
 	if (!feed.ok) {
 		return { ok: false as const, error: `Could not read ${company.name}'s job feed: ${feed.result.ok ? "unknown error" : feed.result.reason}` };
 	}

@@ -100,7 +100,7 @@ export function assembleCandidates(input: { memory: RunMemory; state: TrackerSta
 			sources: group.sources,
 			firstSeenAt: known.get(key)?.firstSeenAt ?? now.toISOString(),
 			reverified: group.fetchedThisRun || listed,
-			agentNote: note ? { reason: note.reason, quote: note.quote } : null,
+			agentNote: note ? { quote: note.quote } : null,
 		});
 		observationInputs.push({
 			identityKey: key,

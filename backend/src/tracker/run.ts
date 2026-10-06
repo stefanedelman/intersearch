@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { ApiRequestError, type TrackerApi } from "./api-client";
+import { ApiRequestError, ApiUnavailable, type TrackerApi } from "./api-client";
+import type { TrackerStateDto } from "../contracts/tracker";
 import { Budget } from "./budget";
 import { configHash, type TrackerConfig } from "./config";
 import { buildFinalizeBody } from "./finalize";
@@ -41,11 +42,10 @@ export async function executeRun(options: ExecuteRunOptions) {
 	log(`Run ${runId} started${started.baselineRunId ? `, comparing with run ${started.baselineRunId}` : " (no earlier complete run to compare with)"}.`);
 	if (started.abandonedRunIds.length) log(`Closed ${started.abandonedRunIds.length} abandoned run(s) as partial.`);
 
-	const state = await api.state(runId);
 	const budget = new Budget(config.limits);
-	const store = new RunStore(api, runId, trace, state);
+	let state: TrackerStateDto | null = null;
+	let store = new RunStore(api, runId, trace, null);
 	const memory = emptyMemory();
-	for (const opportunity of state.opportunities) if (opportunity.firstReportedAt) memory.everReported.add(opportunity.identityKey);
 
 	const ctx: ToolContext = {
 		config,
@@ -64,18 +64,25 @@ export async function executeRun(options: ExecuteRunOptions) {
 		category: "run",
 		status: "started",
 		arguments: { configHash: hash, model: config.model.id, k: config.tracker.k },
-		detail: { savedDocuments: state.documents.length, knownOpportunities: state.opportunities.length, baselineRunId: state.baseline?.runId ?? null },
+		detail: { baselineRunId: started.baselineRunId },
 	});
 
 	let outcome: LoopOutcome;
 	try {
+		state = await api.state(runId);
+		store = new RunStore(api, runId, trace, state);
+		ctx.store = store;
+		for (const opportunity of state.opportunities) if (opportunity.firstReportedAt) memory.everReported.add(opportunity.identityKey);
 		outcome = await runAgentLoop({ config, state, ctx, callModel: options.callModel, isInterrupted: options.isInterrupted ?? (() => false), log });
 	} catch (error) {
-		outcome = { status: "failed", stopReason: `unexpected error: ${(error as Error).message}`, errorCode: "internal", notes: [] };
+		outcome = error instanceof ApiUnavailable
+			? { status: "partial", stopReason: error.message.slice(0, 400), errorCode: "api_unavailable", notes: [] }
+			: { status: "failed", stopReason: `unexpected error: ${(error as Error).message}`.slice(0, 400), errorCode: "internal", notes: [] };
 	}
 	trace.record({ category: "run", status: outcome.status, errorCode: outcome.errorCode, detail: { stopReason: outcome.stopReason, totals: budget.snapshot } });
 
 	const extraNotes: string[] = [];
+	if (!state) extraNotes.push("Previous state could not be loaded. No research was attempted and no comparison with earlier results is available.");
 	if (!store.apiReachable) extraNotes.push("The Intersearch API was unreachable during part of this run; results were saved locally first.");
 	const body = buildFinalizeBody({ runId, config, configHash: hash, outcome, memory, state, store, notes: outcome.notes, budget, extraNotes });
 

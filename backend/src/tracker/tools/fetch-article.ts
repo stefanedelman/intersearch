@@ -5,6 +5,7 @@ import { extract, type Extracted } from "../fetch/extract";
 import { checkUrl, guardedGet, type FetchResult } from "../fetch/transport";
 import { checkUrlStatic } from "../fetch/url-policy";
 import type { ToolContext } from "./context";
+import { sourceTransport } from "./source-transport";
 
 export type FetchArticleOutcome = {
 	status: "fetched" | "skipped_seen" | "rejected" | "failed";
@@ -102,23 +103,7 @@ export async function fetchArticle(ctx: ToolContext, rawUrl: string): Promise<Fe
 	let result: FetchResult | null = null;
 	let retryCount = 0;
 	for (let attempt = 0; attempt <= ctx.config.limits.max_retries; attempt += 1) {
-		ctx.budget.reserveNetwork();
-		const started = new Date();
-		result = await (ctx.fetcher ?? guardedGet)(staticCheck.url.toString(), ctx.policy, ctx.transport);
-		if (result.redirects > 0) ctx.budget.chargeExtraNetwork(result.redirects);
-		ctx.trace.record({
-			category: "http",
-			service: staticCheck.hostname,
-			tool: "fetch_article",
-			step: ctx.step,
-			parentEventId: ctx.parentEventId,
-			arguments: { url: rawUrl, attempt },
-			status: result.ok ? "ok" : result.kind,
-			startedAt: started,
-			latencyMs: result.latencyMs,
-			errorCode: result.ok ? null : result.code,
-			detail: { httpStatus: result.ok ? result.status : (result.status ?? null), redirects: result.redirects, bytes: result.ok ? result.bytes : null },
-		});
+		result = await (ctx.fetcher ?? guardedGet)(staticCheck.url.toString(), ctx.policy, ctx.transport, sourceTransport(ctx, "fetch_article", { attempt }));
 		if (result.ok || !result.transient || result.code === "rate_limited" || attempt === ctx.config.limits.max_retries) break;
 		const wait = 1000 * 2 ** attempt + Math.floor(Math.random() * 300);
 		if (wait >= ctx.budget.remainingMs() - 1000) break;

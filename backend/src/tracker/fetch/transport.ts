@@ -1,7 +1,7 @@
 import type { LookupFunction } from "node:net";
 import zlib from "node:zlib";
 import { Readable } from "node:stream";
-import { Agent, request } from "undici";
+import { Agent, request, type Dispatcher } from "undici";
 import { resolvePublic, systemResolver, type ResolvedAddress, type Resolver } from "./dns";
 import { checkUrlStatic, isIpLiteral, type Rejection, type UrlPolicy } from "./url-policy";
 
@@ -35,6 +35,25 @@ export type FetchFailure = {
 };
 
 export type FetchResult = FetchSuccess | FetchFailure;
+
+export type SourceRoundTrip = {
+	url: string;
+	startedAt: Date;
+	latencyMs: number;
+	status: number | "network_error";
+	errorCode: string | null;
+	redirectHop: number;
+};
+
+export type TransportOptions = {
+	resolver?: Resolver;
+	accept?: string;
+	/** Called after validation, immediately before EACH HTTP hop. May throw to stop the run. */
+	beforeRequest?: (url: string) => void;
+	onRoundTrip?: (trip: SourceRoundTrip) => void;
+	/** Test-only injection; runtime callers use the DNS-pinned agent. */
+	dispatcher?: Dispatcher;
+};
 
 const ACCEPTED_TYPES = /^(text\/html|application\/xhtml\+xml|text\/plain|application\/json|application\/ld\+json)\b/i;
 const USER_AGENT = "IntersearchBot/0.1 (NYU FNMS course project; fetches a few allowlisted public job pages per run)";
@@ -166,7 +185,7 @@ export async function guardedGet(
 	rawUrl: string,
 	policy: UrlPolicy,
 	limits: TransportLimits,
-	options: { resolver?: Resolver; accept?: string } = {},
+	options: TransportOptions = {},
 ): Promise<FetchResult> {
 	const started = Date.now();
 	const deadline = AbortSignal.timeout(limits.timeoutMs);
@@ -180,7 +199,14 @@ export async function guardedGet(
 			return { ok: false, kind: "rejected", code: check.code, reason: check.reason, transient: false, finalUrl: current, latencyMs: elapsed(), redirects };
 		}
 
-		const agent = new Agent({
+		// Keep budget failures outside the network-error catch: they must stop the agent,
+		// not turn into a retryable source failure. Redirects pass through this too.
+		options.beforeRequest?.(check.url.toString());
+		const hopStartedAt = new Date();
+		const hopIndex = redirects;
+		let hopStatus: SourceRoundTrip["status"] = "network_error";
+		let hopError: string | null = null;
+		const agent = options.dispatcher ?? new Agent({
 			connect: { lookup: pinnedLookup(check.hostname, check.addresses), timeout: limits.timeoutMs },
 			headersTimeout: limits.timeoutMs,
 			bodyTimeout: limits.timeoutMs,
@@ -197,6 +223,7 @@ export async function guardedGet(
 					"accept-encoding": "gzip, deflate, br",
 				},
 			});
+			hopStatus = response.statusCode;
 
 			if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
 				discard(response.body);
@@ -233,9 +260,11 @@ export async function guardedGet(
 			return { ok: true, status: response.statusCode, finalUrl: check.url.toString(), contentType, body, bytes: buffer.length, redirects, latencyMs: elapsed() };
 		} catch (error) {
 			const classified = classifyNetworkError(error);
+			hopError = classified.code;
 			return { ok: false, kind: "failed", ...classified, finalUrl: check.url.toString(), latencyMs: elapsed(), redirects };
 		} finally {
-			void agent.close().catch(() => undefined);
+			options.onRoundTrip?.({ url: check.url.toString(), startedAt: hopStartedAt, latencyMs: Date.now() - hopStartedAt.getTime(), status: hopStatus, errorCode: hopError, redirectHop: hopIndex });
+			if (!options.dispatcher) void agent.close().catch(() => undefined);
 		}
 	}
 }

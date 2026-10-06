@@ -12,7 +12,7 @@ export type Candidate = {
 	reverified: boolean;
 	/** Set when this run has explicit evidence the posting is gone (e.g. absent from the company feed). */
 	excludedReason?: string;
-	agentNote?: { reason: string; quote: string } | null;
+	agentNote?: { quote: string } | null;
 };
 
 export type Baseline = {
@@ -216,7 +216,7 @@ export function renderMarkdown(report: ReportJson, meta: { trackerName: string; 
 			lines.push(md(item.summary));
 			lines.push("");
 			lines.push(`- **Fit:** ${md(item.fit)}`);
-			if (item.agentNote) lines.push(`- **Agent note:** ${md(item.agentNote.reason)} — quoted: "${md(item.agentNote.quote)}"`);
+			if (item.agentNote) lines.push(`- **Selected source quote:** "${md(item.agentNote.quote)}"`);
 			for (const highlight of item.highlights) lines.push(`- **From the posting:** "${md(highlight)}"`);
 			if (item.unknowns.length) lines.push(`- **Unknown:** ${item.unknowns.join(", ")}`);
 			for (const note of item.notes) lines.push(`- _${md(note)}_`);

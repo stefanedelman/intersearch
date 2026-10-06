@@ -18,7 +18,7 @@ export type ReportItem = {
 	summary: string;
 	fit: string;
 	highlights: string[];
-	agentNote: { reason: string; quote: string } | null;
+	agentNote: { quote: string } | null;
 	unknowns: string[];
 	notes: string[];
 	reverified: boolean;

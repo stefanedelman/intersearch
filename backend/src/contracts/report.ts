@@ -35,7 +35,7 @@ export const reportItemSchema = z.object({
 	summary: z.string().max(1000),
 	fit: z.string().max(600),
 	highlights: z.array(z.string().max(400)).max(5),
-	agentNote: z.object({ reason: z.string().max(300), quote: z.string().max(400) }).nullable(),
+	agentNote: z.object({ quote: z.string().min(1).max(400) }).strict().nullable(),
 	unknowns: z.array(z.string().max(40)).max(10),
 	notes: z.array(z.string().max(300)).max(10),
 	reverified: z.boolean(),

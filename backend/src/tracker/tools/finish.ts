@@ -7,20 +7,19 @@ export const finishArgsSchema = z.object({
 		.array(
 			z.object({
 				source_id: z.string().min(1).max(100),
-				reason: z.string().max(300).optional(),
 				supporting_quote: z.string().max(300).optional(),
-			}),
+			}).strict(),
 		)
 		.max(20),
-});
+}).strict();
 
 export type FinishArgs = z.infer<typeof finishArgsSchema>;
-export type AcceptedNote = { sourceDocumentId: string; identityKey: string; reason: string; quote: string };
+export type AcceptedNote = { sourceDocumentId: string; identityKey: string; quote: string };
 
 /**
  * finish(report): the model names the postings it considers best, each with an optional short
- * reason backed by a verbatim quote. Code validates everything: unknown source ids are rejected,
- * and a note whose quote is not in the source is dropped. Ranking itself is done by code.
+ * verbatim source quote. There is no free-form reason: finding a quote in a page cannot prove
+ * that an accompanying model-written claim is true. Ranking and fit explanations are code-owned.
  */
 export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: (id: string) => string | null) {
 	const errors: string[] = [];
@@ -32,10 +31,10 @@ export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: 
 			errors.push(`source_id ${candidate.source_id} was not fetched in this run`);
 			continue;
 		}
-		if (candidate.reason && candidate.supporting_quote) {
+		if (candidate.supporting_quote) {
 			const text = sourceText(candidate.source_id) ?? "";
 			if (quoteAppearsIn(candidate.supporting_quote, text)) {
-				notes.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, reason: candidate.reason.trim(), quote: candidate.supporting_quote.trim() });
+				notes.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, quote: candidate.supporting_quote.trim() });
 			} else {
 				droppedNotes += 1;
 			}

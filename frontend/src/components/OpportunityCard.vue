@@ -61,8 +61,7 @@ function hostOf(url: string) {
 		<p class="fit">{{ item.fit }}</p>
 
 		<blockquote v-if="item.agentNote" class="note">
-			<span class="eyebrow">Agent's note</span>
-			<span>{{ item.agentNote.reason }}</span>
+			<span class="eyebrow">Selected source quote</span>
 			<span class="quote">“{{ item.agentNote.quote }}”</span>
 		</blockquote>
 

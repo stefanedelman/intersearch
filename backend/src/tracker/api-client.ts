@@ -15,7 +15,7 @@ export class ApiRequestError extends Error {
 	}
 }
 
-type RoundTrip = { method: string; path: string; status: number | "network_error"; latencyMs: number; attempt: number };
+export type ApiRoundTrip = { method: string; path: string; status: number | "network_error"; startedAt: Date; latencyMs: number; attempt: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -30,7 +30,7 @@ export class TrackerApi {
 
 	constructor(
 		private readonly baseUrl: string,
-		private readonly onRoundTrip?: (trip: RoundTrip) => void,
+		private readonly onRoundTrip?: (trip: ApiRoundTrip) => void,
 		private readonly maxRetries = 2,
 	) {}
 
@@ -46,6 +46,7 @@ export class TrackerApi {
 		for (let attempt = 0; ; attempt += 1) {
 			const started = Date.now();
 			let response: Response;
+			let text: string;
 			try {
 				response = await fetch(url, {
 					method,
@@ -57,17 +58,16 @@ export class TrackerApi {
 					body: body === undefined ? undefined : JSON.stringify(body),
 					signal: AbortSignal.timeout(30_000),
 				});
+				text = await response.text();
 			} catch (error) {
-				this.onRoundTrip?.({ method, path, status: "network_error", latencyMs: Date.now() - started, attempt });
+				this.onRoundTrip?.({ method, path, status: "network_error", startedAt: new Date(started), latencyMs: Date.now() - started, attempt });
 				if (attempt < this.maxRetries) {
 					await sleep(1000 * 2 ** attempt);
 					continue;
 				}
 				throw new ApiUnavailable(`Cannot reach the Intersearch API at ${this.baseUrl} (${(error as Error).message}). Is the backend running? Start it with: npm run dev:backend`);
 			}
-			this.onRoundTrip?.({ method, path, status: response.status, latencyMs: Date.now() - started, attempt });
-
-			const text = await response.text();
+			this.onRoundTrip?.({ method, path, status: response.status, startedAt: new Date(started), latencyMs: Date.now() - started, attempt });
 			const payload = text ? safeJson(text) : null;
 			if (response.ok) return payload as T;
 

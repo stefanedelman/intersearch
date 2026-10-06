@@ -9,7 +9,7 @@ import { artifacts, runDir } from "./local-artifacts";
 import { createGroqModel } from "./providers/groq";
 import { createTavilySearch } from "./providers/tavily";
 import { executeRun } from "./run";
-import type { Trace } from "./trace";
+import { createApiTraceRecorder } from "./trace";
 
 const log = (message: string) => console.log(message);
 const fail = (message: string, code = 1): never => {
@@ -68,10 +68,8 @@ async function commandRun() {
 	const search = config.tools.includes("search_web") && env.TAVILY_API_KEY ? createTavilySearch(env.TAVILY_API_KEY, config.limits.request_timeout_seconds * 1000) : null;
 	if (config.tools.includes("search_web") && !search) log("! TAVILY_API_KEY is not set; search_web will report an auth error if the model calls it.");
 
-	let trace: Trace | null = null;
-	const { api, user } = await connect((trip) => {
-		trace?.record({ category: "api", service: "intersearch-api", arguments: { method: trip.method, path: trip.path.replace(/[0-9a-f-]{36}/g, ":id"), attempt: trip.attempt }, status: String(trip.status), latencyMs: trip.latencyMs });
-	});
+	const apiTrace = createApiTraceRecorder();
+	const { api, user } = await connect(apiTrace.record);
 	log(`Logged in as ${user.username}.`);
 
 	let interrupted = false;
@@ -83,7 +81,7 @@ async function commandRun() {
 
 	let result: Awaited<ReturnType<typeof executeRun>>;
 	try {
-		result = await executeRun({ config, api, callModel, search, log, isInterrupted: () => interrupted, onTrace: (created) => (trace = created) });
+		result = await executeRun({ config, api, callModel, search, log, isInterrupted: () => interrupted, onTrace: apiTrace.attach });
 	} catch (error) {
 		if (error instanceof ApiRequestError && error.code === "RUN_IN_PROGRESS") return fail(`${error.message} Wait for it to finish (runs idle for 10 minutes are closed automatically).`);
 		if (error instanceof ApiRequestError) return fail(`The API rejected the request: ${error.message} ${JSON.stringify(error.details ?? "")}`);

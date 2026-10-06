@@ -63,13 +63,13 @@ Short records of the choices that shape Intersearch: the problem, what we chose,
 
 **Choice:** every run appends its trace to `runs/<id>/trace.jsonl` as it goes, and writes `report.md` before uploading. `tracker:sync` uploads later.
 
-**Tradeoff:** the same data briefly lives in two places, but the run is never lost.
+**Tradeoff:** the same data briefly lives in two places. After the server returns a run id, even a failure loading previous state produces a local partial report; it explicitly says comparison is unavailable and makes no provider request. Failures before run creation still fail fast.
 
 ## Code extracts facts; code ranks
 
 See [AGENT.md](../AGENT.md) section 1.
 
-**Choice:** facts are verbatim quotes cut from the stored page. Scoring is deterministic: role 35, season 25, location 20, skills 15, freshness 5. The API rejects any report whose quotes are not in their cited sources.
+**Choice:** facts are verbatim quotes cut from the stored page. Scoring is deterministic: role 35, season 25, location 20, skills 15, freshness 5. The API rejects any report whose quotes are not in their cited sources. The model can select a source quote but cannot add a free-form factual note: a matching quote alone does not establish that an accompanying claim is true.
 
 **Tradeoff:** extraction is rule-based, so unusual postings yield sparse facts. The report shows those as "not stated" rather than guessing.
 
@@ -94,3 +94,35 @@ See [AGENT.md](../AGENT.md) section 1.
 ## Greenfield
 
 **Choice:** no compatibility layers. Schemas and interfaces are replaced outright while building. The genuine run-1 and run-2 evidence is the only data that must be preserved.
+
+## Budget reservations and network measurements (2026-10-05)
+
+**Choice:** source requests reserve budget immediately before every validated HTTP hop, including feed redirects. Each hop gets its own trace event attributed to the destination host. API startup timings are buffered until run creation and retain their actual start timestamps.
+
+**Choice:** model input reserves the full UTF-8 serialized byte length plus chat-template headroom, rather than an average characters-per-token estimate. The full output ceiling is reserved too, and actual usage is reconciled afterward.
+
+**Tradeoff:** this can stop research early with unused tokens. It is preferable to an unbounded token estimate; changing providers requires reviewing the tokenizer/template assumption.
+
+## Model: `openai/gpt-oss-120b` (2026-10-05)
+
+**Why:** the first live attempt (September 28) failed with Groq 404 `model_not_found` for `llama-3.3-70b-versatile`; Groq's model list for this key no longer includes it. `openai/gpt-oss-120b` is the strongest tool-calling chat model the key can use.
+
+**Choice:** `reasoning_effort: low` and `max_output_tokens: 1000`. Hidden reasoning counts as output tokens, and low effort keeps it short enough to leave room for a `finish` call. The ceiling is kept small because Groq charges the full ceiling against the per-minute token limit.
+
+**Tokenizer review:** gpt-oss uses a byte-level BPE tokenizer, so every token covers at least one UTF-8 byte and the byte-length input reservation remains an upper bound. Its chat template renders tool definitions more compactly than our JSON, and adds a short system header; the existing 2,048-token plus 256-per-message headroom covers that.
+
+## Stay on Groq's free tier and pace model calls (2026-10-05)
+
+**Why:** the free tier allows 8,000 tokens per minute and charges each request its prompt plus the full `max_completion_tokens` up front. This was measured: a 77-token prompt with a 64-token ceiling took 141 tokens from the bucket. Mid-run requests are several thousand tokens, so unpaced calls would hit per-minute 429s and exhaust their retries.
+
+**Choice:** stay on the free tier ($0, nothing billable) rather than upgrade. The loop reads Groq's `x-ratelimit-*-tokens` headers and waits for the bucket to refill before each call. To make each request smaller, only the latest two tool results stay in full; older ones are summaries. The run time limit rose to 900 s (the server ceiling) and `max_total_tokens` to 100,000, still well under the 200,000 tokens per day.
+
+**Tradeoff:** a run takes several minutes, mostly spent waiting on the rate limit. That wait time is visible in the trace. Two full runs fit in one day's token allowance.
+
+## Ending runs cleanly when budgets run low (2026-10-05)
+
+**Why:** two live test runs on a disposable account ended as partial. In the first, the model used all 16 steps without calling `finish`. In the second, it used its 4 searches on one company, and the next search ended the whole run.
+
+**Choice:** on the last allowed step, only `finish` is offered and the model is told to call it. A tool whose own allowance (searches, search credits, fetches) is used up is no longer offered. If it is called anyway, it returns an error to the model instead of ending the run. Run-wide limits (steps, model calls, tokens, network requests, time) still stop the run. `max_steps` and `max_model_calls` rose to 20.
+
+**Also fixed:** a generic careers page title such as "Duolingo Careers" cleaned to an empty title. That became an empty evidence quote, which the finalize API correctly rejected. Extraction now falls back to the next title candidate, and empty quotes are never recorded.

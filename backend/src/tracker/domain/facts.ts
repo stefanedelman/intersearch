@@ -184,12 +184,15 @@ export function extractObservation(input: {
 	const text = extracted.text;
 	const segs = segments(text);
 	const evidence: Evidence[] = [];
-	const cite = (field: string, quote: string) => evidence.push({ field, quote, sourceDocumentId, url: input.finalUrl });
+	const cite = (field: string, quote: string) => {
+		if (quote.trim()) evidence.push({ field, quote, sourceDocumentId, url: input.finalUrl });
+	};
 
-	// Title: structured JSON title, else the page title, else the first heading-like line.
-	const rawTitle = extracted.structured?.title ?? extracted.title ?? segs[0] ?? "Untitled posting";
-	const title = cleanTitle(rawTitle, company?.name ?? null);
-	cite("title", title);
+	// Title: structured JSON title, else the page title, else the first heading-like line. A
+	// generic page title such as "Acme Careers" cleans to nothing, so the next candidate is used.
+	const cleanedTitle = [extracted.structured?.title, extracted.title, segs[0]].map((candidate) => (candidate ? cleanTitle(candidate, company?.name ?? null) : "")).find(Boolean);
+	const title = cleanedTitle ?? "Untitled posting";
+	if (cleanedTitle) cite("title", cleanedTitle);
 
 	// Location: structured field, else a labeled "Location" line, else cities near the top.
 	let locations: string[] = [];
