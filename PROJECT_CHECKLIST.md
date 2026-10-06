@@ -2,7 +2,7 @@
 
 Last updated: **October 5, 2026 (America/New_York)**.
 
-**Status: core implementation complete enough for live validation; Assignment 1B submission is not complete.** The current code passes 75 unit tests and 22 integration tests, typechecks, and a production build. Real Supabase connectivity and `NYUgrader` login were verified. Successful research runs and the required submission evidence are still missing.
+**Status: run 1 captured (complete) and documented; run 2 not captured because of the deadline.** The current code passes 75 unit tests and 22 integration tests, typechecks, and a production build. Real Supabase connectivity and `NYUgrader` login were verified. Successful research runs and the required submission evidence are still missing.
 
 This is the working completion checklist for [the build plan](INTERSEARCH_PLAN.md) and [Assignment 1B](<FNMS Fall 2026 Assignment 1B.pdf>). A checked implementation item means the code exists; it does not mean a genuine research run has demonstrated it. Unchecked items include remaining work, final verification, and user-owned submission actions. Optional features are separated at the end.
 
@@ -158,9 +158,9 @@ Do these before selecting run 1 for submission.
 
 | Evidence | Run id | Actual timestamp with timezone | Status |
 | --- | --- | --- | --- |
-| Run 1 | Pending | Pending | Not captured |
+| Run 1 | `255a44ee-61bf-459c-8889-523126d62283` | 2026-10-06 01:52–01:58 UTC (2026-10-05 21:52 America/New_York) | Complete; exported |
 | Earliest eligible run 2 | — | Run 1 timestamp + at least 24 hours | Pending |
-| Run 2 | Pending | Pending | Not captured |
+| Run 2 | — | — | Not captured: submitted before 24 hours had passed |
 
 ### Provenance and artifact review
 

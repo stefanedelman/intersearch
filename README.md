@@ -236,9 +236,13 @@ Deleting a profile cascades to everything under it.
 
 ## Evidence for grading
 
-- `reports/run1.md`, `reports/run2.md`: genuine runs at least one day apart, exported with `tracker:export`.
-- `traces/run1.jsonl`, `traces/run2.jsonl`: the matching redacted traces.
-- [AGENT.md](AGENT.md): design answers, with numbers measured from those traces (`node scripts/trace-stats.mjs traces/run1.jsonl`).
+- **Run 1:** [`reports/run1.md`](reports/run1.md) and [`traces/run1.jsonl`](traces/run1.jsonl). Run `255a44ee-61bf-459c-8889-523126d62283`, **complete**, 2026-10-06 01:52–01:58 UTC (2026-10-05, 9:52 PM New York), model `qwen/qwen3.8-27b`, logged in as `NYUgrader`. It is on the dashboard under that account.
+- **Run 2: not captured.** Submission was due before a run at least a day after run 1 was possible. The recrawl behavior (skipping cached articles, matching a new URL to a known posting, and the New / Still in top K / Dropped sections) is implemented and covered by `tests/integration/tracker-e2e.test.ts`. Run 1 itself shows the cache at work: all 7 postings were `skipped_seen`, reused from earlier attempts on the same account.
+- **Earlier attempts in `NYUgrader`'s history:** a failed run on 2026-09-28 (the configured model had been retired), and three attempts on 2026-10-05 that stopped partial or failed. Each exposed a bug that was fixed before run 1 (see [docs/decisions.md](docs/decisions.md)). They are kept, not deleted.
+- **Provenance check (2 claims, done against the live sources on 2026-10-06):**
+  - Robinhood, "Software Engineering Intern, Backend (Summer 2027)": the report says pay is "$60—$60 USD (hourly)" and lists New York, NY. The cited <https://boards-api.greenhouse.io/v1/boards/robinhood/jobs/8123225> contains "$60 — $60 USD", and its location field reads "Bellevue, WA; Menlo Park, CA; New York, NY". ✔
+  - Figma, "Software Engineer Intern (Summer 2027)": the report says summer 2027 and "$55—$55 USD (hourly)". The cited <https://boards-api.greenhouse.io/v1/boards/figma/jobs/6143238004> has the title "Software Engineer Intern (Summer 2027)" and contains "$55 — $55 USD". ✔
+- [AGENT.md](AGENT.md): design answers, with numbers measured from the run-1 trace (`node scripts/trace-stats.mjs traces/run1.jsonl`).
 
 ## Tests
 

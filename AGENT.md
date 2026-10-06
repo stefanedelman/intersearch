@@ -1,6 +1,6 @@
 # AGENT.md — how the Intersearch tracker works
 
-> **Status:** Sections 1, 3, and 4 describe the implemented code. Sections 2 and 5 need numbers measured from the genuine run-1 trace. Items marked **[measure]** get filled in after `npm run tracker:run` with real keys, using `node scripts/trace-stats.mjs traces/run1.jsonl`.
+> **Evidence:** run 1 is `255a44ee-61bf-459c-8889-523126d62283` (complete, 2026-10-06 01:52–01:58 UTC, model `qwen/qwen3.8-27b`), exported to [`reports/run1.md`](reports/run1.md) and [`traces/run1.jsonl`](traces/run1.jsonl). Sections 2 and 5 are measured from that trace with `node scripts/trace-stats.mjs traces/run1.jsonl`.
 
 The tracker runs this loop: `list_company_jobs` → `fetch_article` → observe → decide → `finish`. It remembers state across runs through our Express API.
 
@@ -32,14 +32,14 @@ The tracker runs this loop: `list_company_jobs` → `fetch_article` → observe 
 An early design had the model propose facts and a ranked list inside `finish`. We moved both into code for three reasons:
 
 - **Provenance.** A claim that is not in the cited source counts as a hallucination. Code-extracted facts are exact substrings of the stored page, so they cannot be invented. The API re-checks every quote against the stored text at `finalize` and rejects the report otherwise.
-- **Stable comparisons across runs.** New/Still/Dropped only means something if the same posting gets the same score on both days. A temperature-0 model is still not guaranteed to rank identically day to day; `scoreFacts` is.
+- **Stable comparisons across runs.** New/Still/Dropped only means something if the same posting gets the same score on both days. A sampled model is not guaranteed to rank identically day to day; `scoreFacts` is.
 - **Tokens.** The model only sees short extracted facts and a 700-character excerpt per page, not whole postings.
 
 The model still does real agent work. It chooses what to read under a fetch budget, and a poor choice means worse evidence in the report.
 
 ## 2. The network
 
-**[measure]** Fill this in from `node scripts/trace-stats.mjs traces/run1.jsonl`.
+**Run 1 took 44 HTTP round trips** to three services, over 355 s of wall time.
 
 - **Counting rule:** every `model`, `http`, and `api` trace event is exactly one HTTP round trip. `tool` events wrap the round trips they caused (linked by `parentEventId`) and are not counted again.
 - **Retries and redirects:** each HTTP attempt and redirect hop has its own event, timestamp, destination host, and latency. The runtime checks the request budget before each hop, including job-feed redirects. Tool spans are not extra round trips.
@@ -48,19 +48,18 @@ The model still does real agent work. It chooses what to read under a fetch budg
 
 | Service | Round trips (run 1) | Total time | Median | Notes |
 | --- | --- | --- | --- | --- |
-| `api.groq.com` (model) | [measure] | [measure] | [measure] | one per loop step; includes retries after per-minute 429s |
-| `boards-api.greenhouse.io` (feeds and postings) | [measure] | | | 5 feeds + fetched postings |
-| careers sites / `job-boards.greenhouse.io` | [measure] | | | redirects counted separately |
-| `api.tavily.com` (search) | [measure] | | | 1 credit each |
-| `intersearch-api` (our backend) | [measure] | | | login, config import, run start, state, checkpoints, finalize |
+| `intersearch-api` (our backend) | 25 | 15.3 s | 495 ms | login, config import, run start, state load, loading the 7 cached postings, per-step checkpoints, finalize |
+| `api.groq.com` (model) | 14 | 10.2 s | 794 ms | 13 steps plus 1 retry after a per-minute 429; 47,233 input / 1,115 output tokens |
+| `boards-api.greenhouse.io` (job feeds) | 5 | 0.5 s | 82 ms | one feed per company; every posting came from the cache, so no posting was re-fetched |
+| `api.tavily.com` (search) | 0 | — | — | the model did not search; the feeds covered all five companies |
 
-**Where the time went:** [measure]. Our expectation, to confirm against the trace:
+**Where the time went:** almost none of it went to the network.
 
-- Model calls dominate wall time: the loop runs one call per step, and each call re-sends the conversation.
-- Waits after per-minute rate limits show up as `budget`/`retry` events.
-- Fetches of Greenhouse JSON took about 100–170 ms each in development.
+- **Network: 26 s.** The calls are sequential, so this is the sum of round-trip latencies. Our own API, at 15.3 s across 25 trips, cost more than the model's 10.2 s, because the tracker saves through the API after every step.
+- **Rate-limit pacing: about 328 s.** Groq's free tier allows 8,000 tokens per minute and charges each request its prompt plus `max_output_tokens` up front. Each mid-run request is about 3,500 prompt tokens + 1,000 output, so the loop waits about 25–40 s before most calls (10 `budget`/`rate_wait` events in the trace). One estimate came up short: Groq returned a 429, and the call was retried after 1 s.
+- **Fetching: under 1 s.** Earlier attempts on this account had already stored all seven postings, so they were `skipped_seen` (one API round trip each to load the saved text) instead of re-fetched.
 
-The calls are sequential, so wall time is roughly the sum of the round-trip latencies plus any retry waits.
+The bottleneck is the provider's per-minute token allowance, not latency. A paid tier, or a smaller `max_output_tokens`, would shorten the run far more than any network change.
 
 ## 3. "New": when are two articles the same development?
 
@@ -115,7 +114,7 @@ if (waitMs > 60_000 || waitMs >= budget.remainingMs() - 1000) {
 }
 ```
 
-**Pacing before each model call:** Groq's free tier allows 8,000 tokens per minute for `openai/gpt-oss-20b`. It charges each request its prompt plus the full `max_output_tokens` when the request is sent, and the bucket refills continuously (limit / 60 per second). After each response, the loop reads `x-ratelimit-limit-tokens` and `x-ratelimit-remaining-tokens`. Before the next call it waits until the bucket has refilled enough for that request, estimating the prompt from the last call's actual tokens per byte. Each wait is a `budget`/`rate_wait` trace event. If the wait won't fit in `max_elapsed_seconds`, the run stops with a partial report.
+**Pacing before each model call:** Groq's free tier allows 8,000 tokens per minute for `qwen/qwen3.8-27b`. It charges each request its prompt plus the full `max_output_tokens` when the request is sent, and the bucket refills continuously (limit / 60 per second). After each response, the loop reads `x-ratelimit-limit-tokens` and `x-ratelimit-remaining-tokens`. Before the next call it waits until the bucket has refilled enough for that request, estimating the prompt from the last call's actual tokens per byte. Each wait is a `budget`/`rate_wait` trace event. If the wait won't fit in `max_elapsed_seconds`, the run stops with a partial report.
 
 **Per-minute limit** (Groq's "tokens per minute (TPM)" message, or a short Retry-After):
 
@@ -139,26 +138,33 @@ if (waitMs > 60_000 || waitMs >= budget.remainingMs() - 1000) {
 
 These paths are covered by tests in `tests/integration/tracker-e2e.test.ts` and `tests/unit/domain.test.ts`.
 
+**Seen live on 2026-10-05/06:**
+
+- **Per-minute:** run 1 drew one per-minute 429 and continued after a 1 s retry.
+- **Daily:** an earlier attempt (`e488a866`, on `gpt-oss-20b`) hit Groq's daily token cap at step 17. It stopped at once as **failed** with "daily or monthly quota exhausted", made no retry, and still saved its report.
+- **Bad key:** a bogus `GROQ_API_KEY` stopped after exactly one attempt with "the API key is missing or invalid".
+
 ## 5. Budget: what does one run cost?
 
 **Token reservation:** before each model attempt, code reserves the UTF-8 byte length of the serialized messages and tool definitions, plus 2,048 tokens of template headroom, 256 per message, and the full output limit. This deliberately conservative bound replaces the old characters/3 average. It assumes byte-level tokenization with the configured Groq model; a new provider or template needs that assumption reviewed. Actual provider usage replaces the reservation; missing usage keeps the full reservation charged. A call that cannot fit is refused before any request.
 
-**[measure]** Fill in from run 1's totals (the CLI summary, the run page on the dashboard, or `trace-stats`).
+Measured from run 1:
 
 | Resource | Per run (measured) | Configured cap per run | Provider free allowance |
 | --- | --- | --- | --- |
-| Groq model calls | [measure] | `max_model_calls: 26` | 30 requests/minute, 1,000 requests/day (free plan, `openai/gpt-oss-20b`; verified 2026-10-05) |
-| Groq tokens (in + out) | [measure] | `max_total_tokens: 100000` | 8,000 tokens/minute, 200,000 tokens/day (same) |
-| Tavily credits | [measure] | `max_search_credits: 4` | 1,000 credits/month (Researcher plan; verified 2026-10-05) |
-| Greenhouse requests | [measure] | part of `max_network_requests: 60` | public API, no key |
+| Groq model calls | 14 (13 steps + 1 retry) | `max_model_calls: 26` | 30 requests/minute, 1,000 requests/day (free plan, `qwen/qwen3.8-27b`; headers verified 2026-10-05) |
+| Groq tokens (in + out) | 48,348 (47,233 + 1,115) | `max_total_tokens: 150000` | 8,000 tokens/minute, 200,000 tokens/day (same) |
+| Tavily credits | 0 (no searches; test runs used 1–4) | `max_search_credits: 4` | 1,000 credits/month (Researcher plan; verified 2026-10-05) |
+| Greenhouse requests | 5 | part of `max_network_requests: 60` | public API, no key |
 
-**Dollar cost:** $0 on the free tiers. The paid-equivalent cost is [measure] tokens × the model's published price ($0.075 per million input tokens and $0.30 per million output tokens for `openai/gpt-oss-20b`, from Groq's model API on 2026-10-05).
+**Dollar cost:** $0, because both providers are on free plans with no billing. At Groq's list price, run 1 would cost 47,233 × $0.80/M + 1,115 × $4.00/M ≈ **$0.042**, using the model's published price ($0.80 per million input tokens and $4.00 per million output tokens for `qwen/qwen3.8-27b`, from Groq's model API on 2026-10-05).
 
-**Which free tier runs out first when run daily:** work it out separately for each limit.
+**Which free tier runs out first when run daily:** none of them, at one run per day. Each limit, worked out separately:
 
-- **Daily limits reset each day,** so one run per day exhausts them only if a single run exceeds the daily cap. Compare measured tokens per run with the tokens/day and requests/day limits.
-- **A monthly allowance A** (Tavily credits) with measured consumption c per run supports `floor(A / c)` daily runs. The next run, on day `floor(A / c) + 1` of the cycle, would exceed it.
-- **The answer** is the smallest of these. [measure: name the provider and the day]
+- **Groq tokens/day (200,000 per model):** a run uses about 48,000, so one run fills 24% and the allowance resets daily. It would run out within a day only at about 4 runs per day. We saw exactly that on 2026-10-05: the fourth `gpt-oss-20b` run that evening hit the daily cap.
+- **Groq requests/day (1,000):** 14 per run, so about 71 runs per day.
+- **Tavily credits (1,000 per month):** run 1 used 0, so its daily runs never consume the allowance; dividing by zero has no meaning here. In the worst case, the configured cap of 4 credits per run gives `floor(1000 / 4) = 250` runs, more than the 31 days in a monthly cycle. So it doesn't run out either; it would take about 33 searches per day to exhaust it in a month.
+- **What binds first is not daily at all:** Groq's 8,000 tokens per minute. It shapes every run (about 328 s of the 355 s spent waiting) and limits throughput to about 2 model calls per minute (14 calls in 355 s).
 
 ## Security notes
 

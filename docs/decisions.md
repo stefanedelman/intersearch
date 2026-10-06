@@ -156,3 +156,11 @@ See [AGENT.md](../AGENT.md) section 1.
 **Choice:** after a malformed tool call, pacing assumes the request's prompt and output ceiling were spent. `max_model_calls` is 26, leaving 6 attempts for retries above the 20 steps.
 
 **Update:** the retried `NYUgrader` run 1 failed on a second form of malformed output: `output_parse_failed`, where Groq could not parse the model's text at all. All of the model's malformed outputs leaked gpt-oss channel markup (`<|channel|>commentary`) into a tool call. The wrapper now treats any Groq 400 that carries `failed_generation`, or the code `tool_use_failed` or `output_parse_failed`, as malformed model output to report back to the model, never as the end of the run.
+
+## Evidence run uses `qwen/qwen3.8-27b` (2026-10-05)
+
+**Why:** the `gpt-oss-20b` run-1 attempt hit Groq's daily token cap for that model. The tracker classified it as `quota_exhausted` and stopped without retrying, as designed. Both gpt-oss models also repeatedly leaked channel markup (`<|channel|>commentary`) into tool calls. A live test with `qwen/qwen3.8-27b` (reasoning off, temperature 0.7) made no malformed calls, but it fetched more postings and ran into the token budget before finishing.
+
+**Choice:** run 1 uses Qwen, with `max_steps: 14` so the finish-only last step comes before the token budget runs low, and `max_total_tokens: 150000` so the conservative reservation for that final call fits.
+
+**Tradeoff:** fewer steps means fewer postings fetched per run. Qwen costs more at paid rates ($0.80 / $4.00 per million input/output tokens), which is irrelevant on the free tier.
