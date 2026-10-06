@@ -22,7 +22,9 @@ preferences:
 model:
   provider: groq
   id: openai/gpt-oss-120b
-  temperature: 0
+  # OpenAI recommends temperature 1.0 for gpt-oss; at 0 it produced text-only turns and
+  # malformed tool calls. Ranking is done by code, so results stay deterministic given the evidence.
+  temperature: 1
   # Includes reasoning tokens. Groq charges this full ceiling against the per-minute token
   # limit (8K on the free tier) before generating, so keep it small.
   max_output_tokens: 1000

@@ -190,7 +190,13 @@ export async function runAgentLoop(input: {
 							latencyMs: Date.now() - started.getTime(),
 							inputTokens: result.usage?.input ?? null,
 							outputTokens: result.usage?.output ?? null,
-							detail: { finishReason: result.finishReason, toolCalls: result.toolCalls.map((call) => call.name), requestId: result.requestId },
+							detail: {
+								finishReason: result.finishReason,
+								toolCalls: result.toolCalls.map((call) => call.name),
+								requestId: result.requestId,
+								// A reply without a tool call is kept (shortened) so stalled turns can be diagnosed.
+								text: result.toolCalls.length === 0 && result.content ? result.content.slice(0, 300) : null,
+							},
 						});
 						return result;
 					} catch (error) {

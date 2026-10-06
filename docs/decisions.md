@@ -126,3 +126,11 @@ See [AGENT.md](../AGENT.md) section 1.
 **Choice:** on the last allowed step, only `finish` is offered and the model is told to call it. A tool whose own allowance (searches, search credits, fetches) is used up is no longer offered. If it is called anyway, it returns an error to the model instead of ending the run. Run-wide limits (steps, model calls, tokens, network requests, time) still stop the run. `max_steps` and `max_model_calls` rose to 20.
 
 **Also fixed:** a generic careers page title such as "Duolingo Careers" cleaned to an empty title. That became an empty evidence quote, which the finalize API correctly rejected. Extraction now falls back to the next title candidate, and empty quotes are never recorded.
+
+## Malformed tool calls and sampling temperature (2026-10-05)
+
+**Why:** the third live test run failed at step 15. The model called a nonexistent tool (`commentary`), and Groq rejected it with `tool_use_failed`. The loop is meant to feed that back to the model, but the provider message was truncated to 200 characters before the code was checked, so the code wasn't recognized. Before that, the model had answered three turns with text and no tool call.
+
+**Choice:** the Groq wrapper detects `tool_use_failed` from the structured error code and names it at the start of the message. Text-only replies are recorded (shortened) in the trace for diagnosis. Temperature is 1.0, as OpenAI recommends for gpt-oss ("We recommend sampling with temperature=1.0 and top_p=1.0", github.com/openai/gpt-oss); temperature 0 is a likely cause of the degenerate turns.
+
+**Tradeoff:** the model's choices vary between runs. Facts, ranking, and reports are still produced by code from stored evidence.

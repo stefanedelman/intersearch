@@ -68,6 +68,11 @@ export function createGroqModel(apiKey: string | undefined, timeoutMs: number) {
 			if (error instanceof Groq.APIConnectionError || error instanceof Groq.APIConnectionTimeoutError) {
 				throw classifyNetworkFailure("groq", error);
 			}
+			if (error instanceof Groq.APIError && error.status === 400 && (error.error as { error?: { code?: string } } | undefined)?.error?.code === "tool_use_failed") {
+				// Groq rejected the model's own malformed tool call. Name the code up front so the
+				// loop recognizes it even though the provider message is long and gets truncated.
+				throw new ProviderError("groq", "bad_request", `groq returned HTTP 400 tool_use_failed: ${error.message.slice(0, 300)}`, 400);
+			}
 			if (error instanceof Groq.APIError && typeof error.status === "number") {
 				throw classifyHttpFailure({ provider: "groq", status: error.status, headers: error.headers, body: `${JSON.stringify(error.error ?? {})} ${error.message}` });
 			}
