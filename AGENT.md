@@ -115,7 +115,7 @@ if (waitMs > 60_000 || waitMs >= budget.remainingMs() - 1000) {
 }
 ```
 
-**Pacing before each model call:** Groq's free tier allows 8,000 tokens per minute for `openai/gpt-oss-120b`. It charges each request its prompt plus the full `max_output_tokens` when the request is sent, and the bucket refills continuously (limit / 60 per second). After each response, the loop reads `x-ratelimit-limit-tokens` and `x-ratelimit-remaining-tokens`. Before the next call it waits until the bucket has refilled enough for that request, estimating the prompt from the last call's actual tokens per byte. Each wait is a `budget`/`rate_wait` trace event. If the wait won't fit in `max_elapsed_seconds`, the run stops with a partial report.
+**Pacing before each model call:** Groq's free tier allows 8,000 tokens per minute for `openai/gpt-oss-20b`. It charges each request its prompt plus the full `max_output_tokens` when the request is sent, and the bucket refills continuously (limit / 60 per second). After each response, the loop reads `x-ratelimit-limit-tokens` and `x-ratelimit-remaining-tokens`. Before the next call it waits until the bucket has refilled enough for that request, estimating the prompt from the last call's actual tokens per byte. Each wait is a `budget`/`rate_wait` trace event. If the wait won't fit in `max_elapsed_seconds`, the run stops with a partial report.
 
 **Per-minute limit** (Groq's "tokens per minute (TPM)" message, or a short Retry-After):
 
@@ -147,12 +147,12 @@ These paths are covered by tests in `tests/integration/tracker-e2e.test.ts` and 
 
 | Resource | Per run (measured) | Configured cap per run | Provider free allowance |
 | --- | --- | --- | --- |
-| Groq model calls | [measure] | `max_model_calls: 16` | 30 requests/minute, 1,000 requests/day (free plan, `openai/gpt-oss-120b`; verified 2026-10-05) |
+| Groq model calls | [measure] | `max_model_calls: 20` | 30 requests/minute, 1,000 requests/day (free plan, `openai/gpt-oss-20b`; verified 2026-10-05) |
 | Groq tokens (in + out) | [measure] | `max_total_tokens: 100000` | 8,000 tokens/minute, 200,000 tokens/day (same) |
 | Tavily credits | [measure] | `max_search_credits: 4` | 1,000 credits/month (Researcher plan; verified 2026-10-05) |
 | Greenhouse requests | [measure] | part of `max_network_requests: 60` | public API, no key |
 
-**Dollar cost:** $0 on the free tiers. The paid-equivalent cost is [measure] tokens × the model's published price ($0.15 per million input tokens and $0.60 per million output tokens for `openai/gpt-oss-120b`, from Groq's model API on 2026-10-05).
+**Dollar cost:** $0 on the free tiers. The paid-equivalent cost is [measure] tokens × the model's published price ($0.075 per million input tokens and $0.30 per million output tokens for `openai/gpt-oss-20b`, from Groq's model API on 2026-10-05).
 
 **Which free tier runs out first when run daily:** work it out separately for each limit.
 

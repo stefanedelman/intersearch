@@ -21,7 +21,7 @@ preferences:
 
 model:
   provider: groq
-  id: openai/gpt-oss-120b
+  id: openai/gpt-oss-20b
   # OpenAI recommends temperature 1.0 for gpt-oss; at 0 it produced text-only turns and
   # malformed tool calls. Ranking is done by code, so results stay deterministic given the evidence.
   temperature: 1

@@ -27,11 +27,15 @@ export function mergeObservations(observations: Observation[]): Observation {
 	const ordered = [...observations].sort(
 		(a, b) => Number(Boolean(b.facts.postedAt)) - Number(Boolean(a.facts.postedAt)) || Number(b.identity.method === "provider_id") - Number(a.identity.method === "provider_id") || b.evidence.length - a.evidence.length,
 	);
-	const base = ordered[0]!;
+	return fillMissing(ordered[0]!, ordered.slice(1));
+}
+
+/** Keeps `base` and fills only the facts it lacks from `others`, carrying over their quotes. */
+export function fillMissing(base: Observation, others: Observation[]): Observation {
 	const facts: Facts = { ...base.facts, locations: [...base.facts.locations], skills: [...base.facts.skills], eligibility: [...base.facts.eligibility], highlights: [...base.facts.highlights] };
 	const evidence = [...base.evidence];
 	const seen = new Set(evidence.map((item) => `${item.field}|${item.quote}`));
-	for (const other of ordered.slice(1)) {
+	for (const other of others) {
 		const o = other.facts;
 		const fill = <K extends keyof Facts>(key: K, empty: (value: Facts[K]) => boolean, fields: string[]) => {
 			if (empty(facts[key]) && !empty(o[key])) {
@@ -91,7 +95,19 @@ export function assembleCandidates(input: { memory: RunMemory; state: TrackerSta
 			...observation,
 			evidence: observation.evidence.map((evidence) => ({ ...evidence, sourceDocumentId: store?.resolveId(evidence.sourceDocumentId) ?? evidence.sourceDocumentId })),
 		}));
-		const resolved = mergeObservations(resolvedGroup);
+		let resolved = mergeObservations(resolvedGroup);
+		// A different URL for a known posting can carry fewer facts (the careers page without a
+		// location, where the job-board record had one). Fill the gaps from the last saved
+		// observation, and cite its sources for the quotes it contributes.
+		const prior = known.get(key)?.lastObservation;
+		if (prior && prior.sources.length > 0) {
+			const filled = fillMissing(resolved, [{ identity: resolved.identity, facts: prior.facts as unknown as Facts, evidence: prior.evidence, source: prior.sources[0]! }]);
+			const usedDocs = new Set(filled.evidence.slice(resolved.evidence.length).map((item) => item.sourceDocumentId));
+			for (const source of prior.sources) {
+				if (usedDocs.has(source.sourceDocumentId) && !group.sources.some((existing) => existing.sourceDocumentId === source.sourceDocumentId)) group.sources.push(source);
+			}
+			resolved = filled;
+		}
 		const primary = resolved;
 		const listed = feedStatus(memory, primary.facts, primary.identity.providerJobId) === "listed";
 		const note = noteByIdentity.get(key);

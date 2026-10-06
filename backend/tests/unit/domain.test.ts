@@ -9,6 +9,9 @@ import { extract } from "../../src/tracker/fetch/extract";
 import { Budget, BudgetExhausted } from "../../src/tracker/budget";
 import { classifyHttpFailure, ProviderError, withRetries } from "../../src/tracker/failure";
 import { redact } from "../../src/lib/logger";
+import type { TrackerStateDto } from "../../src/contracts/tracker";
+import { assembleCandidates } from "../../src/tracker/finalize";
+import { emptyMemory } from "../../src/tracker/tools/context";
 import { ACME_CONFIG_YAML } from "../fixtures/acme";
 
 const config = parseConfig(ACME_CONFIG_YAML);
@@ -223,4 +226,26 @@ test("a generic careers page title never becomes an empty title quote", () => {
 	const observation = extractObservation({ extracted: extract(html, "text/html", url, 16000), url, finalUrl: url, sourceDocumentId: docId, fetchedAt: new Date().toISOString(), config });
 	assert.ok(observation.evidence.every((item) => item.quote.trim().length > 0), "no empty quotes");
 	assert.match(observation.facts.title, /Software Engineering Intern/);
+});
+
+test("a known posting fetched from a page with fewer facts keeps the facts from its last saved record", () => {
+	const record = observe("Software Engineering Intern (Summer 2027)", "New York, NY", "<p>Build backend services in Python.</p>");
+	assert.deepEqual(record.facts.locations, ["New York, NY"]);
+	const pageUrl = "https://careers.acme.example/jobs/1001";
+	const html = "<html><head><title>Software Engineering Intern (Summer 2027)</title></head><body><p>Build backend services in Python.</p></body></html>";
+	const page = extractObservation({ extracted: extract(html, "text/html", pageUrl, 16000), url: pageUrl, finalUrl: pageUrl, sourceDocumentId: "22222222-2222-4222-8222-222222222222", fetchedAt: new Date().toISOString(), config });
+	assert.equal(page.identity.key, record.identity.key, "same posting");
+	assert.deepEqual(page.facts.locations, []);
+
+	const memory = emptyMemory();
+	memory.observations.set("22222222-2222-4222-8222-222222222222", page);
+	const priorSource = { sourceDocumentId: docId, url: record.source.url, title: record.source.title, fetchedAt: record.source.fetchedAt };
+	const state = { opportunities: [{ identityKey: record.identity.key, firstSeenAt: new Date().toISOString(), firstReportedAt: null, providerJobId: "1001", lastObservation: { facts: record.facts, evidence: record.evidence, sources: [priorSource] } }] } as unknown as TrackerStateDto;
+	const { candidates, observationInputs } = assembleCandidates({ memory, state, store: null, notes: [], now: new Date() });
+
+	assert.equal(candidates.length, 1);
+	assert.deepEqual(candidates[0]!.observation.facts.locations, ["New York, NY"]);
+	const locationQuote = candidates[0]!.observation.evidence.find((item) => item.field === "location");
+	assert.equal(locationQuote?.sourceDocumentId, docId, "the location quote cites the record it came from");
+	assert.ok(observationInputs[0]!.sourceDocumentIds.includes(docId), "that record is listed as a source");
 });

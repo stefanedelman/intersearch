@@ -134,3 +134,17 @@ See [AGENT.md](../AGENT.md) section 1.
 **Choice:** the Groq wrapper detects `tool_use_failed` from the structured error code and names it at the start of the message. Text-only replies are recorded (shortened) in the trace for diagnosis. Temperature is 1.0, as OpenAI recommends for gpt-oss ("We recommend sampling with temperature=1.0 and top_p=1.0", github.com/openai/gpt-oss); temperature 0 is a likely cause of the degenerate turns.
 
 **Tradeoff:** the model's choices vary between runs. Facts, ranking, and reports are still produced by code from stored evidence.
+
+## Keep a known posting's facts when a new URL carries fewer (2026-10-05)
+
+**Why:** in a live test run the model fetched Robinhood's careers page (`job-boards.greenhouse.io/...`) instead of the job-board API record it had fetched before. Duplicate detection correctly matched them by job id, but the web page yielded no location. The posting lost its location score and fell out of the top 5. Across runs, that would be reported as a false "Dropped".
+
+**Choice:** when a run observes a known posting, missing facts are filled from the last saved observation of that posting. The run's own observation stays the base, so newer facts win. Each filled-in quote still cites the document it came from, and that document is added to the posting's sources.
+
+## Evidence runs use `openai/gpt-oss-20b` (2026-10-05)
+
+**Why:** in live tests on a disposable account, `gpt-oss-120b` failed to finish (before later fixes), and its daily token pool was mostly used. A `gpt-oss-20b` run then completed cleanly in 17 steps (about 49K tokens), recovering from a malformed tool call and two per-minute 429s. Groq's free limits are per model and identical for both.
+
+**Choice:** run 1 and run 2 use `gpt-oss-20b`. The model only chooses what to list, fetch, and search, and when to finish; facts, quotes, and ranking come from code, so the smaller model does not lower report accuracy.
+
+**Tradeoff:** the smaller model wastes more steps on confused turns. It is cheaper at paid rates ($0.075 / $0.30 per million input/output tokens versus $0.15 / $0.60).

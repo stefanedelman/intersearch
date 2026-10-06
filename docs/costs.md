@@ -15,12 +15,12 @@ A notification threshold is not a hard cap. If a provider can't enforce a cap, u
 
 | Provider | Limit | Value | Source |
 | --- | --- | --- | --- |
-| Groq, model `openai/gpt-oss-120b` | requests per minute / per day | 30 / 1,000 (free plan; headers confirm 1,000 RPD) | https://console.groq.com/docs/rate-limits, checked 2026-10-05 |
-| Groq, model `openai/gpt-oss-120b` | tokens per minute / per day | 8,000 / 200,000 (free plan; headers confirm 8,000 TPM). TPM is charged at request time as prompt tokens + `max_completion_tokens`. | same |
+| Groq, model `openai/gpt-oss-20b` | requests per minute / per day | 30 / 1,000 (free plan; same as `gpt-oss-120b`, whose headers confirmed 1,000 RPD) | https://console.groq.com/docs/rate-limits, checked 2026-10-05 |
+| Groq, model `openai/gpt-oss-20b` | tokens per minute / per day | 8,000 / 200,000 (free plan; limits are per model). TPM is charged at request time as prompt tokens + `max_completion_tokens`. | same |
 | Tavily | credits per month | 1,000 (Researcher plan, from `GET /usage`; 0 used on 2026-10-05) | https://docs.tavily.com |
 | Greenhouse Job Board API | none published; public GET | — | https://docs.greenhouse.io/job-board.html |
 
-Groq list prices for `openai/gpt-oss-120b` (from `GET /models`, 2026-10-05): $0.15 per million input tokens, $0.60 per million output tokens. Use these for the paid-equivalent cost.
+Groq list prices for `openai/gpt-oss-20b` (from `GET /models`, 2026-10-05): $0.075 per million input tokens, $0.30 per million output tokens. Use these for the paid-equivalent cost.
 
 ## Per-run usage (measured)
 
