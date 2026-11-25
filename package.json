@@ -19,6 +19,7 @@
     "tracker:config": "npm run tracker --prefix backend -- config",
     "tracker:run": "npm run tracker --silent --prefix backend -- run",
     "tracker:export": "npm run tracker --prefix backend -- export",
+    "tracker:handcheck": "npm run tracker --prefix backend -- handcheck",
     "tracker:reset": "npm run tracker --prefix backend -- reset",
     "tracker:tools": "npm run tools --silent --prefix backend --",
     "contract-check": "npm run contract-check --silent --prefix backend --",

@@ -13,7 +13,7 @@ import { createVerifyHandler } from "./verify";
  */
 const verifierEnvSchema = z.object({
 	APP_ENV: z.enum(["development", "test", "production"]).default("development"),
-	/** Render sets PORT; locally VERIFIER_PORT (default 4002). */
+	/** Render sets PORT in the real environment; locally VERIFIER_PORT (default 4002). */
 	PORT: z.coerce.number().int().positive().optional(),
 	VERIFIER_PORT: z.coerce.number().int().positive().default(4002),
 	VERIFIER_TOKEN: serviceToken("VERIFIER_TOKEN"),
@@ -24,7 +24,11 @@ const verifierEnvSchema = z.object({
 });
 
 async function main() {
+	// PORT counts only when the platform sets it (Render). backend/.env also has PORT, but that is the
+	// API's port: read the real environment before the local files are loaded.
+	const platformPort = process.env.PORT;
 	loadLocalEnv();
+	if (platformPort === undefined) delete process.env.PORT;
 	const env = parseEnv(verifierEnvSchema, "verifier");
 	const log = new TraceLog("verifier", { file: env.VERIFIER_TRACE_FILE ?? defaultTraceFile("verifier", env.APP_ENV), stdout: env.APP_ENV === "production" });
 	const callModel = createGroqModel(env.VERIFIER_GROQ_API_KEY, 30_000);

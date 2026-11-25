@@ -116,6 +116,10 @@ export class TrackerApi {
 		return this.request<{ run: RunDetail }>("GET", `/api/tracker/runs/${runId}`);
 	}
 
+	claims(runId: string) {
+		return this.request<{ claims: { claimId: string; developmentId: string; rank: number | null; text: string; sourceUrl: string; label: string; evidence: string | null }[]; counts: Record<string, number> }>("GET", `/api/tracker/runs/${runId}/claims`);
+	}
+
 	report(runId: string) {
 		return this.request<{ report: ReportJson; markdown: string; status: string; createdAt: string }>("GET", `/api/tracker/runs/${runId}/report`);
 	}

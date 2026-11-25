@@ -1,22 +1,29 @@
 # Intersearch
 
-Intersearch is a personal internship research dashboard. A hand-written agent tracks summer 2027 software and backend internships at five companies, ranks the top five with evidence quoted from each posting, and reports what changed since the last run.
+Intersearch is a personal internship research dashboard. A hand-written agent tracks summer 2027 software and backend internships at five companies and ranks the top five. A second agent checks every claim against the page it cites, and the dashboard reports what changed since the last run.
 
-It is built for NYU FNMS Assignment 1 (the account app) and Assignment 1B (the tracker agent). The design and its tradeoffs are in [INTERSEARCH_PLAN.md](INTERSEARCH_PLAN.md), [AGENT.md](AGENT.md), and [docs/decisions.md](docs/decisions.md).
+It is built for NYU FNMS Assignment 1 (the account app), Assignment 1B (the tracker agent), and Assignment 2 (agentic orchestration: the tracker split into an orchestrator, a researcher, and a verifier that talk only over HTTP). The design and its tradeoffs are in [INTERSEARCH_PLAN.md](INTERSEARCH_PLAN.md) and [AGENT.md](AGENT.md) (A1/1B), [ORCHESTRATION_PLAN.md](ORCHESTRATION_PLAN.md) and [ORCHESTRATION.md](ORCHESTRATION.md) (A2), and [docs/decisions.md](docs/decisions.md).
 
 ## Architecture
 
 ```text
-Vue 3 app (localhost:5173) ──bearer token──> Express API (localhost:3000) ──Prisma──> Supabase Postgres
-                                                  │
-                                                  └─ Supabase Auth (passwords, bcrypt)
-Tracker CLI ──bearer token──> Express API          (the tracker never touches the database directly)
-     ├─> Groq (model)      ├─> Tavily (search)      └─> allowlisted job boards (guarded fetch)
+Vue 3 app (:5173) ──user token──> Express API + orchestrator (:3000) ──Prisma──> Supabase Postgres (+ Supabase Auth)
+                                      │
+                                      ├─ POST /research  Bearer RESEARCHER_TOKEN ──> researcher (:4001, laptop)
+                                      │                                                ├─> Groq (qwen/qwen3.8-27b)
+                                      │                                                ├─> Tavily (search)
+                                      │                                                └─> allowlisted job boards (guarded fetch)
+                                      └─ POST /verify    Bearer VERIFIER_TOKEN   ──> verifier (Render free tier)
+                                                                                       ├─> Groq (openai/gpt-oss-120b)
+                                                                                       └─> each cited page (guarded fetch)
 ```
 
-- **Frontend:** Vue 3, Vue Router, Vite, plain CSS. It calls only the Express API.
+- **Frontend:** Vue 3, Vue Router, Vite, plain CSS. It calls only the Express API; it never sees a worker token.
 - **Backend:** Express 5, Prisma 7 with `@prisma/adapter-pg`, Supabase PostgreSQL. Auth uses Supabase Auth through a server-only client, the same pattern as Cirilio.
-- **Tracker:** TypeScript agent loop in `backend/src/tracker` (no agent framework). Model: Groq. Search: Tavily. Postings: Greenhouse's public Job Board API.
+- **Orchestrator** (`backend/src/orchestrator`, inside the API process): starts runs in the background, owns the run budget, retries, failure fallbacks, the report, and the database.
+- **Researcher** (`backend/src/researcher`): the 1B agent loop (no agent framework) behind `POST /research`. Stateless.
+- **Verifier** (`backend/src/verifier`, deployed on Render): fetches each cited page through the same SSRF guard, asks a different model for a verdict per claim, and checks every evidence excerpt against the page in code.
+- **Contract** (`backend/src/shared/contract.ts`): the only code all three share, with the guarded fetch, the evidence normaliser, the trace writer, and the worker runtime in `backend/src/shared`. Workers never import each other or the orchestrator; a test enforces it.
 
 ## Prerequisites
 
@@ -24,6 +31,7 @@ Tracker CLI ──bearer token──> Express API          (the tracker never to
 - **npm 10+** (comes with Node).
 - **Python 3.9+**, only for the `python -m tracker.tools ...` command form.
 - Supabase credentials in your local `backend/.env` (see [Environment](#environment)). For the tracker, also provide a **Groq** API key and a **Tavily** API key.
+- To try the dashboard with no credentials at all: `npm run setup` then `npm run demo` (in-memory database, fake login, scripted workers).
 
 ## Run it (A1: backend and frontend)
 
@@ -39,20 +47,30 @@ npm run db:migrate
 npm run db:seed
 ```
 
-- `npm run setup` installs both packages from their lockfiles and generates the Prisma client. It also creates `backend/.env.local` for your API keys.
+- `npm run setup` installs both packages from their lockfiles and generates the Prisma client. It also creates `backend/.env.local` for your API keys and generates the two service tokens (`RESEARCHER_TOKEN`, `VERIFIER_TOKEN`).
 - `npm run db:migrate` applies the checked-in migrations. It is safe to re-run.
 - `npm run db:seed` creates or refreshes the grader account. It is safe to re-run.
 
-Then start both servers with one command. This installs dependencies, opens the backend and frontend in separate Terminal windows, and opens the app in your browser. Stop each server with Ctrl-C in its Terminal window:
+Then start everything with one command. This installs dependencies, opens the backend, the researcher (and a local verifier, if configured) and the frontend in separate Terminal windows, and opens the app in your browser. Stop each server with Ctrl-C in its Terminal window:
 
 ```bash
 ./start.sh
 ```
 
-Or start them separately, each in its own terminal:
+Or run the whole stack in one terminal with prefixed output (Ctrl-C stops all of it):
+
+```bash
+npm run dev:all
+```
+
+Or start each separately, in its own terminal:
 
 ```bash
 npm run dev:backend
+```
+
+```bash
+npm run dev:researcher
 ```
 
 ```bash
@@ -74,8 +92,9 @@ npm run verify
 
 | File | In git? | Contents |
 | --- | --- | --- |
-| `backend/.env` | No (ignored) | Local credentials for the dedicated course Supabase project, non-secret settings, and course grader credentials. Copy `backend/.env.example` and fill it in before setup. Never commit this file. |
-| `backend/.env.local` | No (ignored) | Your `GROQ_API_KEY` and `TAVILY_API_KEY`. Created empty by `npm run setup`. |
+| `backend/.env` | No (ignored) | Local credentials for the dedicated course Supabase project, non-secret settings (`RESEARCHER_URL`, `VERIFIER_URL`), and course grader credentials. Copy `backend/.env.example` and fill it in before setup. Never commit this file. |
+| `backend/.env.local` | No (ignored) | `GROQ_API_KEY`, `TAVILY_API_KEY`, and the service tokens `RESEARCHER_TOKEN` and `VERIFIER_TOKEN` (generated by `npm run setup`). `VERIFIER_GROQ_API_KEY` and `VERIFIER_MODEL` only if you run a local verifier. |
+| Render environment | — | The deployed verifier's `VERIFIER_TOKEN` (same value as locally), `VERIFIER_GROQ_API_KEY`, and `VERIFIER_MODEL`. See [docs/deploy-verifier.md](docs/deploy-verifier.md). |
 | `.env.example`, `backend/.env.example`, `frontend/.env.example` | Yes | Every variable, documented. |
 
 The frontend needs no `.env`: it defaults to the API at `http://localhost:3000`.
@@ -89,42 +108,41 @@ The frontend needs no `.env`: it defaults to the API at `http://localhost:3000`.
 
 In Authentication settings, keep the default password policy and raise the sign-in rate limit if you run `npm run verify` many times. Free Supabase projects pause after a week idle; open the dashboard to wake one before grading.
 
-## Run the tracker (A1B)
+## Run the tracker (A2: from the dashboard)
 
-Keep the backend running (above). In order:
+Keep the backend and the researcher running (above), with `VERIFIER_URL` in `backend/.env` pointing at the verifier.
 
-1. **Add keys.** Put your Groq and Tavily keys in `backend/.env.local`:
+1. **Log in** as `NYUgrader` at <http://localhost:5173>.
+2. **Check the workers.** The Run card shows the researcher and the verifier as up, asleep, down, or not configured. The verifier runs on Render's free tier, which sleeps after 15 idle minutes; **Wake verifier** wakes it (about a minute) and reports how long it took. A run also wakes it in parallel with research.
+3. **Press Run tracker.** The API re-reads [`config.yaml`](config.yaml) and starts the run in the background. Live progress shows the phase (Waking → Researching → Verifying n/m → Writing report → Done), every request to a worker with its attempts and caller-side latency, and the run budget. **Cancel run** stops it and writes a partial report.
+4. **Read the report.** Each development's claims carry a label: **Supported** (with an excerpt from the page that code confirmed is there), **Unsupported**, **Unreachable** (the page could not be fetched, or the guard refused it), or **Unverified** (the verifier failed, ran out of budget, or the run stopped). Sections show **New since last run**, **Still in top K**, **Returned**, and **Dropped**.
 
-   ```text
-   GROQ_API_KEY=gsk_...
-   TAVILY_API_KEY=tvly-...
-   ```
+If a worker fails, the run still finishes: with the verifier down, claims are Unverified and the run is partial; with the researcher down, the previous top K is shown, marked stale. Run detail has **Claims** (filter by label) and **Network** (every worker request and attempt) tabs.
 
-2. **Run the tracker.** It logs in as `NYUgrader`, reads `config.yaml`, researches, and saves the report:
+From a terminal, `npm run tracker:run` does the same through the same endpoint: it prints worker health, phases, and worker calls, and Ctrl-C cancels.
 
-   ```bash
-   npm run tracker:run
-   ```
+Every run writes `runs/<runId>/report.md`, `runs/<runId>/orchestrator.jsonl`, and, collected from the workers right after the run, `runs/<runId>/researcher.jsonl` and `runs/<runId>/verifier.jsonl`.
 
-3. **Run it again.** The second run reuses saved article text, checks fresh company feeds for the previous top matches, and reports **New since last run**, **Still in top K**, and **Dropped**. A match stays marked **Not re-verified** if its company feed could not be checked and its article was not fetched again:
+- **To export a run for submission:** `npm run tracker:export -- --run RUN_ID --label a2-run1` writes `reports/a2-run1.md` and `traces/a2-run1/{orchestrator,researcher,verifier}.jsonl`. It never overwrites existing evidence.
+- **To reset the tracker's saved history** (keeps the account): `npm run tracker:reset -- --confirm intersearch-development`.
 
-   ```bash
-   npm run tracker:run
-   ```
+Policy lives in [`config.yaml`](config.yaml): topic, K, model, instructions, tools, the researcher's limits, allowed hosts, companies, and the `orchestration` block (the run's total budget, the researcher/verifier split, time budgets, timeouts, and retries). Editing limits, model, or instructions keeps the run-to-run comparison. Changing the topic, K, preferences, or companies starts a new comparison.
 
-4. **Reset the tracker's saved state.** This deletes the `NYUgrader` tracker history but keeps the account:
+### Check the workers directly
 
-   ```bash
-   npm run tracker:reset -- --confirm intersearch-development
-   ```
+```bash
+node scripts/smoke-verifier.mjs
+```
 
-Every run prints its status and writes `runs/<runId>/report.md` and `runs/<runId>/trace.jsonl` locally before uploading. The results appear on the dashboard (log in as `NYUgrader`), with run history and the articles fetched on each run.
+```bash
+npm run contract-check -- --target researcher
+```
 
-- **Exit codes:** 0 complete, 2 partial (a budget ran out), 1 failed (for example, a bad key).
-- **If the backend was unreachable at the end of a run,** the report is still on disk. Upload it later with `npm run tracker:sync -- --run RUN_ID`.
-- **To export a run for submission:** `npm run tracker:export -- --run RUN_ID --label run1` writes `reports/run1.md` and `traces/run1.jsonl`.
+```bash
+npm run contract-check -- --target verifier
+```
 
-Policy lives in [`config.yaml`](config.yaml): topic, K, model, instructions, tools, limits, allowed schemes and hosts, and companies. `tracker:run` re-reads it every time, so an edit (for example `max_steps: 2`) applies to the next run. Editing limits, model, or instructions keeps the run-to-run comparison. Changing the topic, K, preferences, or companies starts a new comparison.
+The smoke test times the verifier's cold start and checks auth, the SSRF guard, a real verification, and replay. The contract check runs the assignment's "Test it yourself" matrix (401, 400, 409, 503 + Retry-After, replay with no new trace lines, partial on a tiny time budget, unreachable internal URLs) and validates every answer against the contract; `--save` writes `docs/contract-check-<target>-<date>.md`.
 
 ### Keys for the tracker
 
@@ -160,13 +178,13 @@ npm run tracker:tools -- search_web 'Robinhood backend intern summer 2027'
 - hosts not in `fetch_policy.allowed_hosts`;
 - any host that is or resolves to a loopback, private, link-local, or other non-public address, before a connection is made.
 
-It also enforces a timeout, a size cap that applies after decompression, and a redirect limit, re-checking every redirect hop. `finish` saves a report for an existing run from a draft file: `npm run tracker:tools -- finish --run RUN_ID --file draft.json`.
+It also enforces a timeout, a size cap that applies after decompression, and a redirect limit, re-checking every redirect hop.
 
 ### Test with your own page
 
 1. Add the page's host to `fetch_policy.allowed_hosts` in `config.yaml`.
 2. Add the page's URL to `seed_urls`.
-3. Run `npm run tracker:run`.
+3. Start a run from the dashboard (or `npm run tracker:run`).
 
 The agent fetches seed URLs first; every guardrail still applies. Page text reaches the model only as labeled data inside tool results, and the tools, hosts, and budgets are fixed in code. The dashboard renders all fetched text with Vue's text interpolation (never `v-html`), so markup or script in a page shows as plain text.
 
@@ -193,26 +211,37 @@ We return 404 rather than 403: a 403 would confirm that an account exists, which
 
 A user is `{id, username, email, createdAt, updatedAt}`. Password hashes are never returned: they exist only inside Supabase Auth (bcrypt, in `auth.users`), and our API never reads that table.
 
-### Tracker endpoints (A1B)
+### Tracker endpoints
 
 All require a bearer token. Every lookup is scoped to the caller's own tracker.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/tracker` | your tracker, its config, the run in progress, and the latest run |
-| PUT | `/api/tracker/config` | import validated `config.yaml` (the CLI does this every run) |
-| GET | `/api/tracker/state` | saved state for the agent: fetched URLs, known developments, last top K |
-| GET | `/api/tracker/documents/:id` | a saved page's text (for reuse without re-fetching) |
+| GET | `/api/tracker` | your tracker, its config, the run in progress (with phase), and the latest run |
+| PUT | `/api/tracker/config` | import a validated config (a run start re-reads `config.yaml` and does this itself) |
 | GET | `/api/tracker/report/latest` | the latest report |
-| POST | `/api/tracker/runs` | start a run → 201 `{runId, baselineRunId}` (one running run at a time) |
-| GET | `/api/tracker/runs` | run history, newest first (`?cursor=&limit=`) |
-| GET | `/api/tracker/runs/:id` | one run: status, totals, config snapshot |
-| GET | `/api/tracker/runs/:id/report` | that run's report |
-| GET | `/api/tracker/runs/:id/sources` | articles fetched on that run: title, URL, fetch time, status |
-| GET | `/api/tracker/runs/:id/trace` | redacted trace events |
-| POST | `/api/tracker/runs/:id/checkpoint` | upload pages, fetch attempts, and trace events (idempotent) |
-| POST | `/api/tracker/runs/:id/finalize` | save the report; rejects quotes not found in their cited source |
+| POST | `/api/tracker/runs` | `{idempotencyKey}` → **202** `{runId}`; the run continues in the background. The same key never starts two runs; 409 while another run is active; 503 if a worker token is missing |
+| POST | `/api/tracker/runs/:id/cancel` | stop the run now → 202; 409 once it has finished |
+| GET | `/api/tracker/runs` | run history, newest first (`?cursor=&limit=`), with kind, failed workers, and claim counts |
+| GET | `/api/tracker/runs/:id` | one run: status, phase, budget ledger, and every worker call with its attempts |
+| GET | `/api/tracker/runs/:id/report` | that run's report (v1 for 1B runs, v2 for orchestrated runs) |
+| GET | `/api/tracker/runs/:id/claims` | claims with labels and evidence (`?label=supported` etc.) |
+| GET | `/api/tracker/runs/:id/sources` | 1B runs: articles fetched on that run |
+| GET | `/api/tracker/runs/:id/trace` | 1B runs: redacted trace events |
+| GET | `/api/tracker/workers` | both workers' health, probed by the server (up, asleep, down, not configured) |
+| POST | `/api/tracker/workers/verifier/wake` | wait for the verifier to answer and report how long it took |
 | POST | `/api/tracker/reset` | `{confirm: "intersearch-development"}` → delete your tracker history |
+
+### Worker endpoints (Assignment 2 contract)
+
+Called only by the orchestrator, with a per-worker bearer token. The request envelope is the assignment's (`request_id`, `run_id`, `time_budget_ms`, `budget{max_steps, max_fetches, max_tokens}`, `payload`); the response envelope is `{request_id, run_id, service, status, result, error, usage}`. See [`backend/src/shared/contract.ts`](backend/src/shared/contract.ts) and [ORCHESTRATION.md](ORCHESTRATION.md).
+
+| Worker | Method | Path | Answers |
+| --- | --- | --- | --- |
+| researcher, verifier | GET | `/healthz` | `{status: "ok"}`, no auth |
+| researcher | POST | `/research` | 200 complete/partial, 500 failed, 400 invalid, 401 bad token (checked before the body), 409 same id with another body, 503 + Retry-After while the same id is in flight |
+| verifier | POST | `/verify` | the same codes; `result.verdicts[]`, evidence ≤ 300 characters and checked against the page |
+| researcher, verifier | GET | `/trace?run_id=` | that run's trace lines (token required) |
 
 ## Database schema
 
@@ -230,14 +259,24 @@ Postgres, managed by Prisma. See [`backend/prisma/schema.prisma`](backend/prisma
 | `OpportunitySource` | which pages support each development and how they were matched |
 | `OpportunityObservation` | the facts and quotes seen for a development on a given run |
 | `Report` / `ReportItem` | the saved report per run and its ranked items (`new`, `still`, `returned`, `dropped`) |
-| `TraceEvent` | every model call, tool call, and network round trip |
+| `TraceEvent` | 1B runs: every model call, tool call, and network round trip |
+| `WorkerCall` | orchestrated runs: one row per request to a worker (written before sending): share, attempts, final status, caller-side latency, reported and charged usage |
+| `Claim` | orchestrated runs: each claim with its label (`supported`, `unsupported`, `unreachable`, `unverified`), evidence, and the verify request that labelled it |
+
+`Run` also records `kind` (`tracker` for 1B, `orchestrated`), `phase`, `failedWorkers`, `stale`, the budget `ledger`, and `cancelRequested`. All Assignment 2 migrations are additive; 1B rows are unchanged.
 
 Deleting a profile cascades to everything under it.
 
 ## Evidence for grading
 
+### Assignment 2
+
+See [ORCHESTRATION.md](ORCHESTRATION.md) for the five answers and links to the evidence: `reports/a2-run1.md`, `traces/a2-run1/`, the contract-check tables in `docs/`, and the hand-check sheet.
+
+### Assignment 1B
+
 - **Run 1:** [`reports/run1.md`](reports/run1.md) and [`traces/run1.jsonl`](traces/run1.jsonl). Run `255a44ee-61bf-459c-8889-523126d62283`, **complete**, 2026-10-06 01:52–01:58 UTC (2026-10-05, 9:52 PM New York), model `qwen/qwen3.8-27b`, logged in as `NYUgrader`. It is on the dashboard under that account.
-- **Run 2: not captured.** Submission was due before a run at least a day after run 1 was possible. The recrawl behavior (skipping cached articles, matching a new URL to a known posting, and the New / Still in top K / Dropped sections) is implemented and covered by `tests/integration/tracker-e2e.test.ts`. Run 1 itself shows the cache at work: all 7 postings were `skipped_seen`, reused from earlier attempts on the same account.
+- **Run 2: not captured.** Submission was due before a run at least a day after run 1 was possible. The recrawl behavior was covered by the 1B test `tests/integration/tracker-e2e.test.ts` at commit `4b6dd54` (Assignment 2 replaced the 1B write path; the New / Still / Dropped comparison now lives in the orchestrator and is covered by `tests/integration/orchestration-e2e.test.ts`). Run 1 itself shows the cache at work: all 7 postings were `skipped_seen`, reused from earlier attempts on the same account.
 - **Earlier attempts in `NYUgrader`'s history:** a failed run on 2026-09-28 (the configured model had been retired), and three attempts on 2026-10-05 that stopped partial or failed. Each exposed a bug that was fixed before run 1 (see [docs/decisions.md](docs/decisions.md)). They are kept, not deleted.
 - **Provenance check (2 claims, done against the live sources on 2026-10-06):**
   - Robinhood, "Software Engineering Intern, Backend (Summer 2027)": the report says pay is "$60—$60 USD (hourly)" and lists New York, NY. The cited <https://boards-api.greenhouse.io/v1/boards/robinhood/jobs/8123225> contains "$60 — $60 USD", and its location field reads "Bellevue, WA; Menlo Park, CA; New York, NY". ✔
@@ -262,8 +301,8 @@ npm run typecheck
 npm run build
 ```
 
-- **Unit tests:** URL/DNS guardrails, decompression and size limits, config validation, identity and dedupe, fact extraction, ranking, report sections, 429 classification, budgets, and redaction.
-- **Integration tests:** run the real API and tracker against an in-memory Postgres (PGlite) with a fake auth provider, a scripted model, and fixture pages. No network or paid APIs are used.
+- **Unit tests:** the wire contract, the worker runtime (auth before parsing, idempotency states, deadlines), URL/DNS guardrails including a redirect to the metadata address, the evidence normaliser, the verifier, the researcher service, the ledger, the worker client (backoff, Retry-After, same bytes on retry), response validation, report sections, config, ranking, budgets, redaction, and the import boundary between services.
+- **Integration tests:** run the real API, orchestrator, researcher, and verifier in-process against an in-memory Postgres (PGlite) with a fake auth provider, scripted models, and fixture pages: the happy path, verifier down, researcher down (stale), a foreign claim_id, a slow verifier (503 + Retry-After, then the stored answer, charged once), a verifier restart between attempts, tiny budgets, cancel, run-to-run comparison, every API endpoint, and the additive migration. No network or paid APIs are used.
 
 ## Troubleshooting
 
@@ -274,13 +313,17 @@ npm run build
 - **401 after a while:** tokens expire (Supabase default: 1 hour); log in again.
 - **Tracker "GROQ_API_KEY is not set":** add it to `backend/.env.local`.
 - **Tracker stops with `quota_exhausted`:** a daily provider limit is used up; it resets the next day, so retrying now will not help.
-- **Tracker "Run ... is still in progress":** another run is active; runs idle for 10 minutes are closed automatically.
+- **Tracker "Run ... is still in progress":** another run is active; runs idle for 10 minutes are closed automatically, and runs left by a restarted API are closed at startup.
+- **Run button disabled, "not configured":** set `RESEARCHER_TOKEN` and `VERIFIER_TOKEN` in `backend/.env.local` (`node scripts/setup-env.mjs` generates them) and restart the API.
+- **Verifier "asleep":** the Render free instance is waking up; press **Wake verifier** or just start the run (it wakes the verifier in parallel with research).
+- **Researcher "down":** start it with `npm run dev:researcher` (it needs `GROQ_API_KEY`). A run with the researcher down shows the previous top K, marked stale.
 
 ## Known limitations
 
 - Saved pages are reused on later runs, so their text can go stale. The dashboard shows when each was fetched.
 - A posting missing from a company's job feed is reported as "no longer listed". A posting simply not seen on a run is never called closed.
 - Two postings with the same title and location but different job ids are kept separate on purpose. A repost under a new id looks new.
-- Runs start from the CLI; the dashboard shows status but has no run button.
+- The verifier's idempotency store is in memory: if Render restarts it between a request and its retry, the retry is recomputed (the orchestrator still charges it once). See ORCHESTRATION.md §3.
+- A supported label means the excerpt is on the cited page and a model judged it supports the claim; the code checks the excerpt, not the judgement.
 - Changing a password does not sign out existing sessions; tokens expire on Supabase's schedule instead.
 - Provider free tiers are finite; see [docs/costs.md](docs/costs.md).

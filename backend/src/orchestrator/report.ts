@@ -163,7 +163,13 @@ export function renderMarkdown(report: ReportJsonV2, meta: { trackerName: string
 		`- **Budget charged:** ${s.budget.charged.steps}/${s.budget.total.steps} steps, ${s.budget.charged.fetches}/${s.budget.total.fetches} fetches, ${s.budget.charged.tokens}/${s.budget.total.tokens} tokens; ${s.workerCalls} worker requests; ${(s.elapsedMs / 1000).toFixed(1)} s`,
 	);
 	if (report.stale) lines.push("", "> **Stale:** the researcher did not answer, so these are the previous run's results. Nothing below was re-checked.");
-	else if (report.status !== "complete") lines.push("", `> This report is ${report.status}. Claims marked UNVERIFIED were not checked by the verifier.`);
+	else if (report.status !== "complete") {
+		const why = [
+			report.workers.researcher === "partial" ? "the researcher stopped early, so it lists only what was found before then" : null,
+			s.claims.unverified ? `${s.claims.unverified} claims marked UNVERIFIED were not checked by the verifier` : null,
+		].filter(Boolean);
+		lines.push("", `> This report is ${report.status}${why.length ? `: ${why.join("; ")}` : ""}.`);
+	}
 	if (report.comparison.note) lines.push("", `> ${md(report.comparison.note)}`);
 
 	const section = (title: string, sectionItems: ReportItemV2[], empty: string) => {

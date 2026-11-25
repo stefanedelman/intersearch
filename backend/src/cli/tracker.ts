@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { paths, trackerEnv } from "../lib/env";
@@ -149,6 +149,73 @@ function exportOrchestrated(runId: string, label: string, markdown: string) {
 	log(`Wrote ${path.relative(paths.repoRoot, reportFile)}.`);
 }
 
+/** Deterministic PRNG (mulberry32) so the sample is reproducible from the run id. */
+function seededRandom(seed: string) {
+	let state = createHash("sha256").update(seed).digest().readUInt32LE(0);
+	return () => {
+		state = (state + 0x6d2b79f5) | 0;
+		let t = Math.imul(state ^ (state >>> 15), 1 | state);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/**
+ * The hand-check sheet for ORCHESTRATION.md §5: every unsupported claim plus 10 supported claims
+ * picked with a seed derived from the run id, each with its source link and an empty column for a
+ * person to fill in after opening the page.
+ */
+async function commandHandcheck(args: string[]) {
+	const runId = argValue(args, "--run") ?? fail("Usage: npm run tracker -- handcheck --run RUN_ID --label a2-run1");
+	const label = argValue(args, "--label") ?? fail("Pass --label (for example a2-run1).");
+	if (!/^[a-z0-9_-]{1,40}$/i.test(label)) fail("Label may contain letters, digits, dash, and underscore only.");
+	const file = path.join(paths.repoRoot, "docs", `handcheck-${label}.md`);
+	if (fs.existsSync(file)) fail(`${path.relative(paths.repoRoot, file)} already exists; it may hold your answers. Choose another --label.`);
+	const { api } = await connect();
+	const { claims, counts } = await api.claims(runId);
+	const unsupported = claims.filter((claim) => claim.label === "unsupported");
+	const supported = claims.filter((claim) => claim.label === "supported");
+	const random = seededRandom(runId);
+	const pool = [...supported];
+	for (let index = pool.length - 1; index > 0; index -= 1) {
+		const other = Math.floor(random() * (index + 1));
+		[pool[index], pool[other]] = [pool[other]!, pool[index]!];
+	}
+	const sample = pool.slice(0, 10).sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99) || a.claimId.localeCompare(b.claimId, undefined, { numeric: true }));
+	const cell = (text: string | null) => (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ");
+	const table = (rows: typeof claims, withEvidence: boolean) => [
+		`| # | Claim | Source | ${withEvidence ? "Evidence excerpt | " : ""}Verifier said | Correct? (yes/no) | Note |`,
+		`| --- | --- | --- | ${withEvidence ? "--- | " : ""}--- | --- | --- |`,
+		...rows.map((claim) => `| ${claim.claimId} | ${cell(claim.text)} | <${claim.sourceUrl}> | ${withEvidence ? `${cell(claim.evidence)} | ` : ""}${claim.label} |  |  |`),
+	];
+	const lines = [
+		`# Hand-check: ${label}`,
+		"",
+		`Run \`${runId}\`. Claims: ${counts.supported ?? 0} supported, ${counts.unsupported ?? 0} unsupported, ${counts.unreachable ?? 0} unreachable, ${counts.unverified ?? 0} unverified.`,
+		"",
+		"How to check: open each source link and decide whether the page really supports the claim (for supported rows, also that the excerpt is on the page and backs the claim). Write yes or no in **Correct?**. A verifier error is a supported claim the page does not back, or an unsupported claim the page does back.",
+		"",
+		`Sample: every unsupported claim (${unsupported.length}) and ${sample.length} of ${supported.length} supported claims, shuffled with a seed derived from the run id (\`npm run tracker -- handcheck --run ${runId} --label ${label}\` picks the same ones).`,
+		"",
+		"## Unsupported claims (all)",
+		"",
+		...(unsupported.length ? table(unsupported, false) : ["_None._"]),
+		"",
+		"## Supported claims (random sample)",
+		"",
+		...(sample.length ? table(sample, true) : ["_None._"]),
+		"",
+		"## Result",
+		"",
+		"- Checked by: ",
+		"- Errors found: __ of __",
+		"",
+	];
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, lines.join("\n"));
+	log(`Wrote ${path.relative(paths.repoRoot, file)}: ${unsupported.length} unsupported + ${sample.length} supported claims to check by hand.`);
+}
+
 async function commandReset(args: string[]) {
 	const confirm = argValue(args, "--confirm");
 	if (confirm !== "intersearch-development") fail("This deletes the tracker's saved history for the logged-in account. Re-run with: npm run tracker:reset -- --confirm intersearch-development");
@@ -164,12 +231,14 @@ async function main() {
 			return commandConfig();
 		case "run":
 			return commandRun();
+		case "handcheck":
+			return commandHandcheck(args);
 		case "export":
 			return commandExport(args);
 		case "reset":
 			return commandReset(args);
 		default:
-			fail("Usage: tracker <config | run | export --run ID --label NAME | reset --confirm intersearch-development>");
+			fail("Usage: tracker <config | run | export --run ID --label NAME | handcheck --run ID --label NAME | reset --confirm intersearch-development>");
 	}
 }
 
