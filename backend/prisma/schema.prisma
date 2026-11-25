@@ -29,6 +29,15 @@ enum ReportSection {
   dropped
 }
 
+// Assignment 2: the label a claim carries in the report. unverified is the orchestrator's label for
+// a claim the verifier never answered (down, timed out, malformed reply, or out of budget).
+enum ClaimLabel {
+  supported
+  unsupported
+  unreachable
+  unverified
+}
+
 // One row per Supabase Auth user. Supabase owns credentials and email;
 // this table only maps usernames to auth user ids. No password or hash column.
 model Profile {
@@ -79,21 +88,28 @@ model CompanySource {
 }
 
 model Run {
-  id             String    @id @default(uuid()) @db.Uuid
-  trackerId      String    @db.Uuid
-  idempotencyKey String
-  status         RunStatus @default(running)
-  startedAt      DateTime  @default(now())
-  lastEventAt    DateTime  @default(now())
-  finishedAt     DateTime?
-  configSnapshot Json
-  configHash     String
-  comparisonKey  String
-  baselineRunId  String?   @db.Uuid
-  stopReason     String?
-  partial        Boolean   @default(false)
-  budgetTotals   Json?
-  errorCode      String?
+  id              String    @id @default(uuid()) @db.Uuid
+  trackerId       String    @db.Uuid
+  idempotencyKey  String
+  status          RunStatus @default(running)
+  startedAt       DateTime  @default(now())
+  lastEventAt     DateTime  @default(now())
+  finishedAt      DateTime?
+  configSnapshot  Json
+  configHash      String
+  comparisonKey   String
+  baselineRunId   String?   @db.Uuid
+  stopReason      String?
+  partial         Boolean   @default(false)
+  budgetTotals    Json?
+  errorCode       String?
+  // Assignment 2 (orchestrated runs). 1B runs keep the defaults.
+  kind            String    @default("tracker") // "tracker" (1B CLI run) | "orchestrated"
+  phase           String? // starting | researching | verifying | reporting | done
+  failedWorkers   String[]  @default([])
+  stale           Boolean   @default(false)
+  ledger          Json?
+  cancelRequested Boolean   @default(false)
 
   tracker       Tracker                  @relation(fields: [trackerId], references: [id], onDelete: Cascade)
   baseline      Run?                     @relation("RunBaseline", fields: [baselineRunId], references: [id], onDelete: SetNull)
@@ -102,6 +118,8 @@ model Run {
   observations  OpportunityObservation[]
   traceEvents   TraceEvent[]
   report        Report?
+  workerCalls   WorkerCall[]
+  claims        Claim[]
 
   @@unique([trackerId, idempotencyKey])
   @@index([trackerId, startedAt(sort: Desc)])
@@ -235,6 +253,7 @@ model ReportItem {
 
   report      Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
   opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  claims      Claim[]
 
   @@unique([reportId, opportunityId])
 }
@@ -263,4 +282,51 @@ model TraceEvent {
 
   @@unique([runId, eventId])
   @@index([runId, step])
+}
+
+// One row per logical request the orchestrator sent to a worker (attempts summarised). Written
+// BEFORE the request is sent, so a restarted orchestrator knows which request_ids it used.
+model WorkerCall {
+  id            String    @id @default(uuid()) @db.Uuid
+  runId         String    @db.Uuid
+  requestId     String    @unique @db.Uuid
+  service       String // researcher | verifier
+  endpoint      String // /research | /verify | /healthz
+  attempts      Int       @default(0)
+  finalStatus   String? // HTTP status code, or timeout | network_error
+  // pending | complete | partial | failed | malformed | unanswered | refused_budget | rejected
+  outcome       String    @default("pending")
+  latencyMs     Int? // caller side, summed over attempts
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  share         Json // the budget share sent: time_budget_ms + budget
+  reportedUsage Json?
+  chargedUsage  Json?
+  errorCode     String?
+  errorMessage  String?
+  attemptLog    Json? // [{ attempt, status, latencyMs, retryAfterMs }]
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, startedAt])
+}
+
+// A claim in an orchestrated run's report, with the label it ended up with.
+model Claim {
+  id              String     @id @default(uuid()) @db.Uuid
+  runId           String     @db.Uuid
+  reportItemId    String?    @db.Uuid
+  developmentId   String // the researcher's development id (Opportunity.identityKey)
+  claimId         String
+  text            String
+  sourceUrl       String
+  label           ClaimLabel
+  evidence        String?
+  verifyRequestId String?    @db.Uuid
+
+  run        Run         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  reportItem ReportItem? @relation(fields: [reportItemId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, claimId])
+  @@index([runId, developmentId])
 }

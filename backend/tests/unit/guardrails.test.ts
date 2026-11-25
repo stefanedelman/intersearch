@@ -2,9 +2,9 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import zlib from "node:zlib";
 import { Readable } from "node:stream";
-import { checkUrlStatic, nonPublicReason } from "../../src/tracker/fetch/url-policy";
-import { resolvePublic } from "../../src/tracker/fetch/dns";
-import { checkUrl, guardedGet } from "../../src/tracker/fetch/transport";
+import { checkUrlStatic, nonPublicReason } from "../../src/shared/fetch/url-policy";
+import { resolvePublic } from "../../src/shared/fetch/dns";
+import { checkUrl, guardedGet } from "../../src/shared/fetch/transport";
 
 const policy = { allowedSchemes: ["http", "https"], allowedPorts: [80, 443], allowedHosts: ["boards-api.greenhouse.io", "stripe.com"] };
 const publicResolver = async () => [{ address: "104.18.0.1", family: 4 as const }];
@@ -98,7 +98,7 @@ describe("DNS validation", () => {
 });
 
 describe("body limits", async () => {
-	const { readLimitedForTest } = await import("../../src/tracker/fetch/transport");
+	const { readLimitedForTest } = await import("../../src/shared/fetch/transport");
 
 	test("stops a decompression bomb at the byte cap (decompressed size counts)", async () => {
 		const bomb = zlib.gzipSync(Buffer.alloc(5_000_000, 0));

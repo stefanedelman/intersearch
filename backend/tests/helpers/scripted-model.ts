@@ -1,4 +1,4 @@
-import type { CallModel, ModelMessage, ModelResponse } from "../../src/tracker/providers/groq";
+import type { CallModel, ModelMessage, ModelResponse } from "../../src/shared/providers/groq";
 
 export type ScriptStep =
 	| { tool: string; args: Record<string, unknown> | ((messages: ModelMessage[]) => Record<string, unknown>) }

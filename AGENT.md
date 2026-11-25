@@ -87,7 +87,7 @@ We accept that error rather than merging by title. Stripe lists *"Software Engin
 
 ## 4. Failure: a 429 comes back
 
-A 429 is classified before anything is retried. From [`backend/src/tracker/failure.ts`](backend/src/tracker/failure.ts) (`classifyHttpFailure`):
+A 429 is classified before anything is retried. From [`backend/src/shared/providers/failure.ts`](backend/src/shared/providers/failure.ts) (`classifyHttpFailure`):
 
 ```ts
 if (status === 429) {

@@ -41,8 +41,46 @@ fi
 
 node "$ROOT/scripts/setup-env.mjs"
 
-echo "Starting backend..."
-open_terminal "Intersearch Backend" "$ROOT/backend" "npm run dev"
+# Which keys are set (values are never printed).
+has_key() {
+	grep -Eq "^[[:space:]]*$1[[:space:]]*=[[:space:]]*[^[:space:]]" "$ROOT/backend/.env" "$ROOT/backend/.env.local" 2>/dev/null
+}
+verifier_url() {
+	grep -Eh "^[[:space:]]*VERIFIER_URL[[:space:]]*=" "$ROOT/backend/.env" 2>/dev/null | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//; s/^["'\'']//; s/["'\'']$//'
+}
+
+LOCAL_VERIFIER=0
+if has_key VERIFIER_GROQ_API_KEY && has_key VERIFIER_MODEL; then
+	case "$(verifier_url)" in
+		"" | *localhost* | *127.0.0.1*) LOCAL_VERIFIER=1 ;;
+	esac
+fi
+
+echo "Starting backend (API + orchestrator)..."
+if [[ "$LOCAL_VERIFIER" == "1" ]]; then
+	open_terminal "Intersearch Backend" "$ROOT/backend" "VERIFIER_URL=http://127.0.0.1:4002 npm run dev"
+else
+	open_terminal "Intersearch Backend" "$ROOT/backend" "npm run dev"
+fi
+
+echo "Starting researcher..."
+if has_key GROQ_API_KEY; then
+	open_terminal "Intersearch Researcher" "$ROOT/backend" "npm run dev:researcher"
+else
+	echo "  ! GROQ_API_KEY is empty in backend/.env.local: the researcher will not start, and runs will show stale results."
+fi
+
+if [[ "$LOCAL_VERIFIER" == "1" ]]; then
+	echo "Starting local verifier on :4002..."
+	open_terminal "Intersearch Verifier" "$ROOT/backend" "npm run dev:verifier"
+elif [[ -n "$(verifier_url)" ]]; then
+	echo "Verifier: $(verifier_url) (Render; the dashboard's Wake verifier button wakes it)"
+else
+	echo "  ! No verifier: set VERIFIER_URL in backend/.env, or VERIFIER_GROQ_API_KEY and VERIFIER_MODEL in backend/.env.local for a local one."
+fi
+for key in RESEARCHER_TOKEN VERIFIER_TOKEN; do
+	has_key "$key" || echo "  ! $key is missing: the dashboard cannot start runs until setup-env.mjs adds it."
+done
 
 echo "Starting frontend..."
 open_terminal "Intersearch Frontend" "$ROOT/frontend" "npm run dev -- --host 127.0.0.1"

@@ -2,14 +2,18 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError } from "../api/client";
-import { formatDateTime, formatDuration, safeHref, trackerApi, type Report, type RunSummary, type SourceAttempt, type TraceEvent } from "../api/tracker";
+import { CLAIM_LABEL_TEXT, CLAIM_LABELS, formatDateTime, formatDuration, safeHref, trackerApi, WORKER_TEXT, type ClaimCounts, type ClaimLabel, type ClaimRow, type Report, type RunDetail, type SourceAttempt, type TraceEvent } from "../api/tracker";
+import ClaimList from "../components/ClaimList.vue";
+import LedgerBars from "../components/LedgerBars.vue";
+import LiveRun from "../components/LiveRun.vue";
 import ReportSections from "../components/ReportSections.vue";
 import RunStatusBadge from "../components/RunStatusBadge.vue";
+import WorkerCallsTable from "../components/WorkerCallsTable.vue";
 
 const route = useRoute();
 const runId = computed(() => String(route.params.id));
 
-const run = ref<(RunSummary & { attemptCounts: Record<string, number> }) | null>(null);
+const run = ref<RunDetail | null>(null);
 const report = ref<Report | null>(null);
 const markdown = ref("");
 const sources = ref<SourceAttempt[]>([]);
@@ -18,7 +22,12 @@ const traceCursor = ref<string | null>(null);
 const traceLoaded = ref(false);
 const loading = ref(true);
 const error = ref("");
-const tab = ref<"report" | "sources" | "trace">("report");
+const tab = ref<"report" | "sources" | "trace" | "claims" | "network">("report");
+const claims = ref<ClaimRow[]>([]);
+const claimCounts = ref<ClaimCounts | null>(null);
+const claimFilter = ref<ClaimLabel | null>(null);
+const claimsLoaded = ref(false);
+const orchestrated = computed(() => run.value?.kind === "orchestrated");
 
 const statusLabel: Record<SourceAttempt["status"], string> = {
 	fetched: "Fetched",
@@ -36,6 +45,14 @@ const statusClass: Record<SourceAttempt["status"], string> = {
 const totals = computed(() => run.value?.budgetTotals ?? null);
 const stats = computed(() => {
 	if (!run.value) return [];
+	if (orchestrated.value) {
+		const counts = run.value.claimCounts ?? { supported: 0, unsupported: 0, unreachable: 0, unverified: 0 };
+		const ledger = run.value.ledger;
+		const list: { label: string; value: string | number }[] = CLAIM_LABELS.map((label) => ({ label: CLAIM_LABEL_TEXT[label], value: counts[label] }));
+		list.push({ label: "Worker requests", value: run.value.workerCalls.filter((call) => call.endpoint !== "/healthz").length });
+		if (ledger) list.push({ label: "Tokens charged", value: `${ledger.charged.tokens.toLocaleString()}` });
+		return list;
+	}
 	const counts = run.value.attemptCounts;
 	const list: { label: string; value: string | number }[] = [
 		{ label: "Fetched", value: counts.fetched ?? 0 },
@@ -82,16 +99,42 @@ function traceStatusClass(status: string) {
 	return "";
 }
 
+async function load() {
+	const detail = await trackerApi.run(runId.value);
+	run.value = detail.run;
+	if (detail.run.kind !== "orchestrated") sources.value = (await trackerApi.sources(runId.value)).sources;
+	if (detail.run.hasReport) {
+		const saved = await trackerApi.report(runId.value);
+		report.value = saved.report;
+		markdown.value = saved.markdown;
+	}
+}
+
+async function loadClaims() {
+	const result = await trackerApi.claims(runId.value, claimFilter.value ?? undefined);
+	claims.value = result.claims;
+	claimCounts.value = result.counts;
+	claimsLoaded.value = true;
+}
+
+async function openClaims() {
+	tab.value = "claims";
+	if (!claimsLoaded.value) await loadClaims().catch((err) => (error.value = (err as Error).message));
+}
+
+async function filterClaims(label: ClaimLabel | null) {
+	claimFilter.value = label;
+	await loadClaims().catch((err) => (error.value = (err as Error).message));
+}
+
+async function onFinished() {
+	claimsLoaded.value = false;
+	await load().catch((err) => (error.value = (err as Error).message));
+}
+
 onMounted(async () => {
 	try {
-		const [detail, sourcePage] = await Promise.all([trackerApi.run(runId.value), trackerApi.sources(runId.value)]);
-		run.value = detail.run;
-		sources.value = sourcePage.sources;
-		if (detail.run.hasReport) {
-			const saved = await trackerApi.report(runId.value);
-			report.value = saved.report;
-			markdown.value = saved.markdown;
-		}
+		await load();
 	} catch (err) {
 		error.value = err instanceof ApiError && err.status === 404 ? "Run not found." : (err as Error).message;
 	} finally {
@@ -119,7 +162,8 @@ async function openTrace() {
 				</p>
 			</div>
 			<div class="row">
-				<RunStatusBadge v-if="run" :status="run.status" :stale="run.errorCode === 'abandoned'" />
+				<span v-if="run" class="mono kind">{{ run.kind === "orchestrated" ? "Orchestrated" : "1B tracker" }}</span>
+				<RunStatusBadge v-if="run" :status="run.status" :stale="run.errorCode === 'abandoned' || run.errorCode === 'orchestrator_restarted'" />
 				<button v-if="markdown" type="button" class="btn btn-secondary btn-sm" @click="downloadMarkdown">Export Markdown</button>
 			</div>
 		</header>
@@ -128,7 +172,10 @@ async function openTrace() {
 		<div v-if="loading" class="skeleton" style="height: 200px" aria-label="Loading run"></div>
 
 		<template v-if="run && !loading">
-			<p v-if="run.stopReason" :class="['alert', run.status === 'failed' ? 'alert-error' : 'alert-warn']">Stopped: {{ run.stopReason }}</p>
+			<LiveRun v-if="run.status === 'running' && orchestrated" :run-id="run.id" @finished="onFinished" />
+			<p v-if="run.stopReason" :class="['alert', run.status === 'failed' ? 'alert-error' : 'alert-warn']">
+				Stopped: {{ run.stopReason }}<span v-if="run.failedWorkers.length"> · failed worker: {{ run.failedWorkers.map((worker) => WORKER_TEXT[worker]).join(", ") }}</span>
+			</p>
 
 			<section class="stats" aria-label="Run totals">
 				<div v-for="stat in stats" :key="stat.label" class="stat">
@@ -139,15 +186,48 @@ async function openTrace() {
 
 			<div class="tabs" role="tablist" aria-label="Run details">
 				<button type="button" role="tab" :aria-selected="tab === 'report'" :class="{ active: tab === 'report' }" @click="tab = 'report'">Report</button>
-				<button type="button" role="tab" :aria-selected="tab === 'sources'" :class="{ active: tab === 'sources' }" @click="tab = 'sources'">
-					Articles <span class="tab-count mono">{{ sources.length }}</span>
-				</button>
-				<button type="button" role="tab" :aria-selected="tab === 'trace'" :class="{ active: tab === 'trace' }" @click="openTrace">Trace</button>
+				<template v-if="orchestrated">
+					<button type="button" role="tab" :aria-selected="tab === 'claims'" :class="{ active: tab === 'claims' }" @click="openClaims">
+						Claims <span class="tab-count mono">{{ run.claimCounts ? Object.values(run.claimCounts).reduce((a, b) => a + b, 0) : 0 }}</span>
+					</button>
+					<button type="button" role="tab" :aria-selected="tab === 'network'" :class="{ active: tab === 'network' }" @click="tab = 'network'">
+						Network <span class="tab-count mono">{{ run.workerCalls.length }}</span>
+					</button>
+				</template>
+				<template v-else>
+					<button type="button" role="tab" :aria-selected="tab === 'sources'" :class="{ active: tab === 'sources' }" @click="tab = 'sources'">
+						Articles <span class="tab-count mono">{{ sources.length }}</span>
+					</button>
+					<button type="button" role="tab" :aria-selected="tab === 'trace'" :class="{ active: tab === 'trace' }" @click="openTrace">Trace</button>
+				</template>
 			</div>
 
 			<div v-if="tab === 'report'">
 				<ReportSections v-if="report" :report="report" />
 				<p v-else class="card card-compact muted">This run has no report yet.</p>
+			</div>
+
+			<div v-else-if="tab === 'claims'" class="stack">
+				<p class="subtle">Every claim the researcher made, with the verifier's label. Supported claims carry an excerpt that code confirmed is on the cited page.</p>
+				<div class="filters" role="group" aria-label="Filter claims by label">
+					<button type="button" :class="['btn', 'btn-sm', claimFilter === null ? 'btn-secondary' : 'btn-ghost']" @click="filterClaims(null)">All</button>
+					<button v-for="label in CLAIM_LABELS" :key="label" type="button" :class="['btn', 'btn-sm', claimFilter === label ? 'btn-secondary' : 'btn-ghost']" @click="filterClaims(label)">
+						{{ CLAIM_LABEL_TEXT[label] }} <span class="mono tab-count">{{ claimCounts?.[label] ?? 0 }}</span>
+					</button>
+				</div>
+				<div class="card card-compact">
+					<ClaimList v-if="claims.length" :claims="claims" />
+					<p v-else-if="claimsLoaded" class="muted">No claims{{ claimFilter ? ` labelled ${CLAIM_LABEL_TEXT[claimFilter].toLowerCase()}` : "" }}.</p>
+				</div>
+			</div>
+
+			<div v-else-if="tab === 'network'" class="stack">
+				<p class="subtle">Every request the orchestrator sent to a worker, with each attempt (→ marks a retry). Latency is measured by the orchestrator, not the worker. Charged is steps / fetches / tokens.</p>
+				<div v-if="run.ledger" class="card card-compact ledger-card">
+					<span class="eyebrow">Run budget (charged once per request)</span>
+					<LedgerBars :ledger="run.ledger" />
+				</div>
+				<WorkerCallsTable :calls="run.workerCalls" />
 			</div>
 
 			<div v-else-if="tab === 'sources'" class="stack">
@@ -328,6 +408,22 @@ async function openTrace() {
 	margin-top: 6px;
 	max-width: 280px;
 	font-size: 12px;
+}
+
+.kind {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.ledger-card {
+	gap: var(--space-3);
+	max-width: 560px;
 }
 
 .trace td {

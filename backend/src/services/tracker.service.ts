@@ -2,11 +2,13 @@ import { prisma } from "../lib/prisma";
 import { errors } from "../lib/errors";
 import { serverEnv } from "../lib/env";
 import { Prisma } from "../generated/prisma/client";
-import type { Run, Tracker } from "../generated/prisma/client";
-import { comparisonKey, configHash, trackerConfigSchema, type TrackerConfig } from "../tracker/config";
-import { quoteAppearsIn } from "../tracker/domain/normalize";
-import type { CheckpointBody, FinalizeBody, StartRunResponse, TrackerStateDto } from "../contracts/tracker";
-import type { EvidenceRef, ReportJson } from "../contracts/report";
+import type { Run, Tracker, WorkerCall } from "../generated/prisma/client";
+import { AppError } from "../lib/errors";
+import { ConfigError, comparisonKey, configHash, loadConfig, ORCHESTRATION_DEFAULTS, trackerConfigSchema, type TrackerConfig } from "../shared/config";
+import type { JobRunner } from "../orchestrator/jobs";
+import { claimLabels, type ClaimLabelValue } from "../contracts/report";
+import type { StartRunResponse } from "../contracts/tracker";
+import type { ReportJson } from "../contracts/report";
 
 const STALE_RUN_MS = 10 * 60 * 1000;
 const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -33,10 +35,33 @@ function publicConfig(config: TrackerConfig | null) {
 		limits: config.limits,
 		allowedHosts: config.fetch_policy.allowed_hosts,
 		companies: config.companies.map((company) => ({ id: company.id, name: company.name, careersUrl: company.careers_url })),
+		orchestration: config.orchestration
+			? {
+					totalBudget: config.orchestration.total_budget,
+					researcherSplit: config.orchestration.split.researcher,
+					timeBudgetMs: config.orchestration.time_budget_ms,
+					runDeadlineMs: config.orchestration.run_deadline_ms,
+				}
+			: null,
 	};
 }
 
-function runSummary(run: Run & { report?: { items: { section: string }[] } | null; _count?: { fetchAttempts: number } }) {
+type ClaimCounts = Record<ClaimLabelValue, number>;
+
+/** Claim label counts per run, for run lists and details (empty counts for 1B runs). */
+async function claimCountsFor(runIds: string[]): Promise<Map<string, ClaimCounts>> {
+	const byRun = new Map<string, ClaimCounts>();
+	if (!runIds.length) return byRun;
+	const rows = await prisma.claim.groupBy({ by: ["runId", "label"], where: { runId: { in: runIds } }, _count: { _all: true } });
+	for (const row of rows) {
+		const counts = byRun.get(row.runId) ?? { supported: 0, unsupported: 0, unreachable: 0, unverified: 0 };
+		counts[row.label] = row._count._all;
+		byRun.set(row.runId, counts);
+	}
+	return byRun;
+}
+
+function runSummary(run: Run & { report?: { items: { section: string }[] } | null; _count?: { fetchAttempts: number } }, claimCounts?: ClaimCounts) {
 	const counts = { new: 0, still: 0, returned: 0, dropped: 0 };
 	for (const item of run.report?.items ?? []) counts[item.section as keyof typeof counts] += 1;
 	return {
@@ -53,6 +78,33 @@ function runSummary(run: Run & { report?: { items: { section: string }[] } | nul
 		counts,
 		budgetTotals: run.budgetTotals,
 		configHash: run.configHash,
+		kind: run.kind,
+		phase: run.phase,
+		failedWorkers: run.failedWorkers ?? [],
+		stale: run.stale,
+		cancelRequested: run.cancelRequested,
+		claimCounts: claimCounts ?? null,
+	};
+}
+
+/** A worker call as the dashboard shows it. Never includes bodies, tokens, or keys. */
+function workerCallDto(call: WorkerCall) {
+	return {
+		requestId: call.requestId,
+		service: call.service,
+		endpoint: call.endpoint,
+		attempts: call.attempts,
+		finalStatus: call.finalStatus,
+		outcome: call.outcome,
+		latencyMs: call.latencyMs,
+		startedAt: call.startedAt.toISOString(),
+		finishedAt: call.finishedAt?.toISOString() ?? null,
+		share: call.share,
+		reportedUsage: call.reportedUsage,
+		chargedUsage: call.chargedUsage,
+		errorCode: call.errorCode,
+		errorMessage: call.errorMessage,
+		attemptLog: call.attemptLog,
 	};
 }
 
@@ -85,7 +137,7 @@ export const trackerService = {
 				comparisonKey: tracker.comparisonKey,
 				updatedAt: tracker.updatedAt.toISOString(),
 			},
-			runInProgress: running ? { id: running.id, startedAt: running.startedAt.toISOString(), lastEventAt: running.lastEventAt.toISOString() } : null,
+			runInProgress: running ? { id: running.id, startedAt: running.startedAt.toISOString(), lastEventAt: running.lastEventAt.toISOString(), phase: running.phase, cancelRequested: running.cancelRequested } : null,
 			latestRun: latest ? runSummary(latest) : null,
 		};
 	},
@@ -118,7 +170,7 @@ export const trackerService = {
 		return { configHash: hash, comparisonKey: key };
 	},
 
-	async startRun(profileId: string, idempotencyKey: string): Promise<StartRunResponse> {
+	async startRun(profileId: string, idempotencyKey: string): Promise<StartRunResponse & { created: boolean }> {
 		const tracker = await trackerFor(profileId);
 		if (!tracker.activeConfig || !tracker.configHash || !tracker.comparisonKey) {
 			throw errors.conflict("NO_CONFIG", "Import config.yaml before starting a run.");
@@ -129,7 +181,7 @@ export const trackerService = {
 			await tx.$queryRaw`SELECT id FROM "Tracker" WHERE id = ${tracker.id}::uuid FOR UPDATE`;
 
 			const existing = await tx.run.findUnique({ where: { trackerId_idempotencyKey: { trackerId: tracker.id, idempotencyKey } } });
-			if (existing) return { runId: existing.id, status: "running" as const, baselineRunId: existing.baselineRunId, abandonedRunIds: [] };
+			if (existing) return { runId: existing.id, status: existing.status, baselineRunId: existing.baselineRunId, abandonedRunIds: [], created: false };
 
 			const stale = await tx.run.findMany({ where: { trackerId: tracker.id, status: "running", lastEventAt: { lt: new Date(now.getTime() - STALE_RUN_MS) } }, select: { id: true } });
 			if (stale.length) {
@@ -153,312 +205,78 @@ export const trackerService = {
 					configHash: tracker.configHash!,
 					comparisonKey: tracker.comparisonKey!,
 					baselineRunId: baseline?.id ?? null,
+					kind: "orchestrated",
+					phase: "starting",
 				},
 			});
-			return { runId: run.id, status: "running" as const, baselineRunId: baseline?.id ?? null, abandonedRunIds: stale.map((row) => row.id) };
+			return { runId: run.id, status: run.status, baselineRunId: baseline?.id ?? null, abandonedRunIds: stale.map((row) => row.id), created: true };
 		});
 	},
 
-	async state(profileId: string, runId?: string): Promise<TrackerStateDto> {
-		const tracker = await trackerFor(profileId);
-		const run = runId ? await ownedRun(profileId, runId) : null;
-		const key = run?.comparisonKey ?? tracker.comparisonKey;
-
-		const baselineRun = run
-			? run.baselineRunId
-				? await prisma.run.findUnique({ where: { id: run.baselineRunId }, include: { report: { include: { items: { include: { opportunity: true } } } } } })
-				: null
-			: key
-				? await prisma.run.findFirst({ where: { trackerId: tracker.id, status: "complete", comparisonKey: key, report: { isNot: null } }, orderBy: { startedAt: "desc" }, include: { report: { include: { items: { include: { opportunity: true } } } } } })
-				: null;
-
-		const anyComplete = await prisma.run.count({ where: { trackerId: tracker.id, status: "complete", id: run ? { not: run.id } : undefined } });
-
-		const documents = await prisma.sourceDocument.findMany({
-			where: { trackerId: tracker.id },
-			orderBy: { fetchedAt: "desc" },
-			take: 1000,
-			select: { id: true, canonicalUrl: true, title: true, fetchedAt: true, contentHash: true },
-		});
-		const latestPerUrl = new Map<string, (typeof documents)[number]>();
-		for (const doc of documents) if (!latestPerUrl.has(doc.canonicalUrl)) latestPerUrl.set(doc.canonicalUrl, doc);
-
-		const opportunities = await prisma.opportunity.findMany({
-			where: { trackerId: tracker.id },
-			orderBy: { lastSeenAt: "desc" },
-			take: 300,
-			include: {
-				observations: { orderBy: { observedAt: "desc" }, take: 1 },
-				sources: { include: { sourceDocument: { select: { id: true, finalUrl: true, title: true, fetchedAt: true } } }, take: 10 },
-			},
-		});
-
-		return {
-			trackerId: tracker.id,
-			comparisonKey: key ?? null,
-			comparisonReset: !baselineRun && anyComplete > 0,
-			baseline: baselineRun?.report
-				? {
-						runId: baselineRun.id,
-						items: baselineRun.report.items
-							.filter((item) => item.section !== "dropped")
-							.map((item) => ({ identityKey: item.opportunity.identityKey, rank: item.rank, company: item.opportunity.companyName, title: item.opportunity.title })),
-					}
-				: null,
-			documents: [...latestPerUrl.values()].map((doc) => ({ ...doc, fetchedAt: doc.fetchedAt.toISOString() })),
-			opportunities: opportunities.map((opportunity) => {
-				const last = opportunity.observations[0];
-				return {
-					id: opportunity.id,
-					identityKey: opportunity.identityKey,
-					companyName: opportunity.companyName,
-					title: opportunity.title,
-					providerJobId: opportunity.providerJobId,
-					firstSeenAt: opportunity.firstSeenAt.toISOString(),
-					lastSeenAt: opportunity.lastSeenAt.toISOString(),
-					firstReportedAt: opportunity.firstReportedAt?.toISOString() ?? null,
-					lastObservation: last
-						? {
-								facts: last.extractedFacts as Record<string, unknown>,
-								evidence: last.evidenceReferences as EvidenceRef[],
-								sources: opportunity.sources.map((source) => ({
-									sourceDocumentId: source.sourceDocument.id,
-									url: source.sourceDocument.finalUrl,
-									title: source.sourceDocument.title,
-									fetchedAt: source.sourceDocument.fetchedAt.toISOString(),
-								})),
-							}
-						: null,
-				};
-			}),
-		};
-	},
-
-	async document(profileId: string, documentId: string) {
-		const tracker = await trackerFor(profileId);
-		const doc = await prisma.sourceDocument.findFirst({ where: { id: documentId, trackerId: tracker.id } });
-		if (!doc) throw errors.notFound("Document not found.");
-		return {
-			id: doc.id,
-			canonicalUrl: doc.canonicalUrl,
-			finalUrl: doc.finalUrl,
-			sourceKind: doc.sourceKind,
-			title: doc.title,
-			text: doc.text,
-			contentHash: doc.contentHash,
-			httpStatus: doc.httpStatus,
-			metadata: doc.metadata as Record<string, unknown> | null,
-			fetchedAt: doc.fetchedAt.toISOString(),
-		};
-	},
-
-	async checkpoint(profileId: string, runId: string, body: CheckpointBody) {
-		const run = await ownedRun(profileId, runId);
-		const hasReport = await prisma.report.count({ where: { runId } });
-		if (hasReport) throw errors.conflict("RUN_FINALIZED", "This run is already finalized.");
-
-		const documentIds: Record<string, string> = {};
-		for (const doc of body.documents) {
-			const saved = await prisma.sourceDocument.upsert({
-				where: { trackerId_canonicalUrl_contentHash: { trackerId: run.trackerId, canonicalUrl: doc.canonicalUrl, contentHash: doc.contentHash } },
-				create: { ...doc, metadata: doc.metadata ? json(doc.metadata) : Prisma.JsonNull, trackerId: run.trackerId, fetchedAt: new Date(doc.fetchedAt) },
-				update: {},
-				select: { id: true },
-			});
-			documentIds[doc.id] = saved.id;
-		}
-
-		const remap = (id: string | null) => (id ? (documentIds[id] ?? id) : null);
-		const attemptDocIds = body.fetchAttempts.map((attempt) => remap(attempt.sourceDocumentId)).filter((id): id is string => Boolean(id));
-		const ownedDocs = new Set(
-			(await prisma.sourceDocument.findMany({ where: { id: { in: attemptDocIds }, trackerId: run.trackerId }, select: { id: true } })).map((doc) => doc.id),
-		);
-
-		if (body.fetchAttempts.length) {
-			await prisma.fetchAttempt.createMany({
-				skipDuplicates: true,
-				data: body.fetchAttempts.map((attempt) => {
-					const docId = remap(attempt.sourceDocumentId);
-					return { ...attempt, runId, sourceDocumentId: docId && ownedDocs.has(docId) ? docId : null, attemptedAt: new Date(attempt.attemptedAt) };
-				}),
-			});
-		}
-		if (body.events.length) {
-			await prisma.traceEvent.createMany({
-				skipDuplicates: true,
-				data: body.events.map((event) => ({
-					runId,
-					eventId: event.eventId,
-					parentEventId: event.parentEventId,
-					step: event.step,
-					category: event.category,
-					service: event.service,
-					tool: event.tool,
-					argumentsRedacted: event.arguments === null || event.arguments === undefined ? Prisma.JsonNull : json(event.arguments),
-					status: event.status,
-					startedAt: new Date(event.startedAt),
-					latencyMs: event.latencyMs,
-					inputTokens: event.inputTokens,
-					outputTokens: event.outputTokens,
-					searchCredits: event.searchCredits,
-					estimatedCost: event.estimatedCost,
-					errorCode: event.errorCode,
-					detail: event.detail === null || event.detail === undefined ? Prisma.JsonNull : json(event.detail),
-				})),
-			});
-		}
-		if (run.status === "running") await prisma.run.update({ where: { id: runId }, data: { lastEventAt: new Date() } });
-		return { documentIds };
-	},
-
-	async finalize(profileId: string, runId: string, body: FinalizeBody) {
-		const run = await ownedRun(profileId, runId);
-		const existing = await prisma.report.findUnique({ where: { runId } });
-		if (existing) return { reportId: existing.id, alreadyFinalized: true };
-		if (body.report.runId !== runId) throw errors.badRequest("Report runId does not match.");
-
-		const config = run.configSnapshot as TrackerConfig;
-		if (body.report.items.length > config.tracker.k) throw errors.badRequest(`Report has more than K=${config.tracker.k} items.`);
-		const ranks = body.report.items.map((item) => item.rank);
-		if (new Set(ranks).size !== ranks.length) throw errors.badRequest("Report ranks must be unique.");
-
-		// Provenance: every cited document must belong to this tracker, and every quote must
-		// actually occur in that document's stored text.
-		const citedIds = new Set<string>();
-		const allEvidence: EvidenceRef[] = [];
-		for (const observation of body.observations) {
-			observation.sourceDocumentIds.forEach((id) => citedIds.add(id));
-			allEvidence.push(...observation.evidence);
-		}
-		for (const item of body.report.items) {
-			item.sources.forEach((source) => citedIds.add(source.sourceDocumentId));
-			allEvidence.push(...item.evidence);
-		}
-		allEvidence.forEach((evidence) => citedIds.add(evidence.sourceDocumentId));
-		const docs = await prisma.sourceDocument.findMany({ where: { id: { in: [...citedIds] }, trackerId: run.trackerId }, select: { id: true, text: true, title: true } });
-		const docById = new Map(docs.map((doc) => [doc.id, doc]));
-		const missing = [...citedIds].filter((id) => !docById.has(id));
-		if (missing.length) throw errors.badRequest("Report cites documents that do not belong to this tracker.", { missing: missing.slice(0, 5) });
-
-		const unsupported = allEvidence.filter((evidence) => {
-			const doc = docById.get(evidence.sourceDocumentId)!;
-			// The page title is part of the fetched document, so a quote may come from it too.
-			return !(quoteAppearsIn(evidence.quote, doc.text) || (doc.title && quoteAppearsIn(evidence.quote, doc.title)));
-		});
-		if (unsupported.length) {
-			throw errors.badRequest("Some cited quotes do not appear in their source documents.", unsupported.slice(0, 5).map((evidence) => ({ field: evidence.field, quote: evidence.quote })));
-		}
-		for (const item of body.report.items) {
-			if (item.agentNote && !item.sources.some((source) => quoteAppearsIn(item.agentNote!.quote, docById.get(source.sourceDocumentId)!.text))) {
-				throw errors.badRequest("An agent note quote does not appear in its item's sources.");
+	/**
+	 * POST /runs: re-read and import config.yaml, create the run, and start the orchestrator in the
+	 * background. The same idempotencyKey returns the same run and never starts it twice.
+	 */
+	async launchRun(profileId: string, idempotencyKey: string, runner: JobRunner): Promise<StartRunResponse> {
+		const missing = runner.missingTokens();
+		if (missing.length) throw new AppError(503, "WORKERS_NOT_CONFIGURED", `Set ${missing.join(" and ")} in backend/.env.local and restart the API (see backend/.env.example).`);
+		if (runner.settings.configPath) {
+			let config: TrackerConfig;
+			try {
+				config = loadConfig(runner.settings.configPath);
+			} catch (error) {
+				if (error instanceof ConfigError) throw new AppError(400, "CONFIG_INVALID", error.message);
+				throw error;
 			}
+			await this.importConfig(profileId, config);
 		}
+		const { created, ...started } = await this.startRun(profileId, idempotencyKey);
+		if (created) void runner.start(started.runId);
+		return started;
+	},
 
-		const now = new Date();
-		const report = await prisma.$transaction(
-			async (tx) => {
-				const companies = await tx.companySource.findMany({ where: { trackerId: run.trackerId } });
-				const companyIdByKey = new Map(companies.map((company) => [company.key, company.id]));
-				const opportunityIdByKey = new Map<string, string>();
+	/** Stops the request in flight now and makes the run write a partial report ("cancelled from the dashboard"). */
+	async cancelRun(profileId: string, runId: string, runner: JobRunner) {
+		const run = await ownedRun(profileId, runId);
+		if (run.status !== "running") throw errors.conflict("RUN_NOT_RUNNING", `Run ${run.id} has already finished (${run.status}).`);
+		await prisma.run.update({ where: { id: run.id }, data: { cancelRequested: true, lastEventAt: new Date() } });
+		const stoppedNow = runner.cancel(run.id);
+		return { runId: run.id, cancelRequested: true, stoppedNow };
+	},
 
-				for (const observation of body.observations) {
-					const data = {
-						companySourceId: observation.companyId ? (companyIdByKey.get(observation.companyId) ?? null) : null,
-						companyName: observation.companyName,
-						provider: observation.identityMethod === "provider_id" ? "greenhouse" : null,
-						providerJobId: observation.providerJobId,
-						title: observation.title,
-						normalizedTitle: observation.normalizedTitle,
-						locationKey: observation.locationKey,
-						season: observation.season,
-						applicationUrl: observation.applicationUrl,
-					};
-					const opportunity = await tx.opportunity.upsert({
-						where: { trackerId_identityKey: { trackerId: run.trackerId, identityKey: observation.identityKey } },
-						create: { trackerId: run.trackerId, identityKey: observation.identityKey, ...data, firstSeenAt: now, lastSeenAt: now },
-						update: observation.reverified ? { ...data, lastSeenAt: now } : {},
-					});
-					opportunityIdByKey.set(observation.identityKey, opportunity.id);
-					for (const sourceDocumentId of observation.sourceDocumentIds) {
-						await tx.opportunitySource.upsert({
-							where: { opportunityId_sourceDocumentId: { opportunityId: opportunity.id, sourceDocumentId } },
-							create: { opportunityId: opportunity.id, sourceDocumentId, relation: "supports", dedupeMethod: observation.identityMethod, confidence: observation.identityMethod === "provider_id" ? 1 : 0.7 },
-							update: {},
-						});
-					}
-					if (observation.reverified) {
-						await tx.opportunityObservation.upsert({
-							where: { runId_opportunityId: { runId, opportunityId: opportunity.id } },
-							create: { runId, opportunityId: opportunity.id, extractedFacts: json(observation.facts), evidenceReferences: json(observation.evidence) },
-							update: {},
-						});
-					}
-				}
+	async listClaims(profileId: string, runId: string, label: ClaimLabelValue | undefined) {
+		await ownedRun(profileId, runId);
+		const rows = await prisma.claim.findMany({ where: { runId, ...(label ? { label } : {}) }, include: { reportItem: { select: { rank: true } } } });
+		rows.sort((a, b) => (a.reportItem?.rank ?? 99) - (b.reportItem?.rank ?? 99) || a.claimId.localeCompare(b.claimId, undefined, { numeric: true }));
+		const counts = Object.fromEntries(claimLabels.map((value) => [value, 0])) as Record<ClaimLabelValue, number>;
+		for (const row of await prisma.claim.groupBy({ by: ["label"], where: { runId }, _count: { _all: true } })) counts[row.label] = row._count._all;
+		return {
+			claims: rows.map((row) => ({
+				claimId: row.claimId,
+				developmentId: row.developmentId,
+				rank: row.reportItem?.rank ?? null,
+				text: row.text,
+				sourceUrl: row.sourceUrl,
+				label: row.label,
+				evidence: row.evidence,
+				verifyRequestId: row.verifyRequestId,
+			})),
+			counts,
+		};
+	},
 
-				const keys = [...body.report.items.map((item) => item.identityKey), ...body.report.dropped.map((item) => item.identityKey)];
-				const missingKeys = keys.filter((key) => !opportunityIdByKey.has(key));
-				if (missingKeys.length) {
-					const found = await tx.opportunity.findMany({ where: { trackerId: run.trackerId, identityKey: { in: missingKeys } }, select: { id: true, identityKey: true } });
-					found.forEach((opportunity) => opportunityIdByKey.set(opportunity.identityKey, opportunity.id));
-				}
+	/** Both workers' /healthz, probed by the server with a short timeout. */
+	async workers(runner: JobRunner) {
+		const [researcher, verifier] = await Promise.all([runner.probe("researcher", 3_000), runner.probe("verifier", 3_000)]);
+		return { researcher, verifier, checkedAt: new Date().toISOString() };
+	},
 
-				const created = await tx.report.create({
-					data: {
-						runId,
-						status: body.status,
-						reportJson: json(body.report satisfies ReportJson),
-						markdown: body.markdown,
-						previousCompleteRunId: run.baselineRunId,
-					},
-				});
-				const itemRows = [
-					...body.report.items.map((item) => ({
-						reportId: created.id,
-						opportunityId: opportunityIdByKey.get(item.identityKey),
-						rank: item.rank,
-						section: item.section,
-						score: item.score,
-						scoreBreakdown: json(item.breakdown),
-						summary: item.summary,
-						evidenceReferences: json(item.evidence),
-					})),
-					...body.report.dropped.map((item) => ({
-						reportId: created.id,
-						opportunityId: opportunityIdByKey.get(item.identityKey),
-						rank: null,
-						section: "dropped" as const,
-						score: 0,
-						scoreBreakdown: json({}),
-						summary: item.reason,
-						evidenceReferences: json([]),
-					})),
-				].filter((row): row is typeof row & { opportunityId: string } => Boolean(row.opportunityId));
-				if (itemRows.length) await tx.reportItem.createMany({ data: itemRows, skipDuplicates: true });
-
-				// Only complete runs count as "reported", so a partial run cannot make a role look
-				// like it "returned" later.
-				if (body.status === "complete") {
-					const reportedIds = body.report.items.map((item) => opportunityIdByKey.get(item.identityKey)).filter((id): id is string => Boolean(id));
-					await tx.opportunity.updateMany({ where: { id: { in: reportedIds }, firstReportedAt: null }, data: { firstReportedAt: now } });
-				}
-
-				await tx.run.update({
-					where: { id: runId },
-					data: {
-						status: body.status,
-						partial: body.status !== "complete",
-						finishedAt: run.finishedAt ?? now,
-						stopReason: body.stopReason ?? run.stopReason,
-						errorCode: body.errorCode ?? (run.errorCode === "abandoned" ? "abandoned" : null),
-						budgetTotals: json(body.budgetTotals),
-						lastEventAt: now,
-					},
-				});
-				return created;
-			},
-			{ timeout: 30_000 },
-		);
-		return { reportId: report.id, alreadyFinalized: false };
+	/** Wakes the verifier (Render's free tier sleeps after 15 idle minutes) and reports how long it took. */
+	async wakeVerifier(profileId: string, runner: JobRunner) {
+		const tracker = await trackerFor(profileId);
+		const parsed = trackerConfigSchema.safeParse(tracker.activeConfig);
+		const timeoutMs = parsed.success ? parsed.data.orchestration.timeouts.healthz_wake_ms : ORCHESTRATION_DEFAULTS.timeouts.healthz_wake_ms;
+		return { verifier: await runner.probe("verifier", timeoutMs), timeoutMs };
 	},
 
 	async listRuns(profileId: string, cursor: string | undefined, limit: number) {
@@ -473,18 +291,22 @@ export const trackerService = {
 			include: { report: { select: { items: { select: { section: true } } } }, _count: { select: { fetchAttempts: true } } },
 		});
 		const page = runs.slice(0, take);
-		return { runs: page.map(runSummary), nextCursor: runs.length > take ? page.at(-1)!.id : null };
+		const counts = await claimCountsFor(page.filter((run) => run.kind === "orchestrated").map((run) => run.id));
+		return { runs: page.map((run) => runSummary(run, counts.get(run.id))), nextCursor: runs.length > take ? page.at(-1)!.id : null };
 	},
 
 	async getRun(profileId: string, runId: string) {
 		const run = await ownedRun(profileId, runId);
 		const withReport = await prisma.run.findUniqueOrThrow({ where: { id: run.id }, include: { report: { select: { items: { select: { section: true } } } } } });
 		const attempts = await prisma.fetchAttempt.groupBy({ by: ["status"], where: { runId }, _count: { _all: true } });
+		const workerCalls = await prisma.workerCall.findMany({ where: { runId }, orderBy: [{ startedAt: "asc" }, { id: "asc" }] });
 		return {
 			run: {
-				...runSummary(withReport),
+				...runSummary(withReport, run.kind === "orchestrated" ? ((await claimCountsFor([run.id])).get(run.id) ?? { supported: 0, unsupported: 0, unreachable: 0, unverified: 0 }) : undefined),
 				config: publicConfig(run.configSnapshot as TrackerConfig),
 				attemptCounts: Object.fromEntries(attempts.map((row) => [row.status, row._count._all])),
+				ledger: run.ledger,
+				workerCalls: workerCalls.map(workerCallDto),
 			},
 		};
 	},

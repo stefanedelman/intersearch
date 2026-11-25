@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ApiError } from "../api/client";
-import { formatDateTime, formatDuration, trackerApi, type Report, type RunSummary, type TrackerOverview } from "../api/tracker";
+import { trackerApi, type Report, type RunSummary, type TrackerOverview } from "../api/tracker";
+import LiveRun from "../components/LiveRun.vue";
 import ReportSections from "../components/ReportSections.vue";
-import RunStatusBadge from "../components/RunStatusBadge.vue";
+import RunControl from "../components/RunControl.vue";
 import { useAuth } from "../composables/useAuth";
-import { usePolling } from "../composables/usePolling";
 
 const { user, refresh } = useAuth();
 
@@ -14,21 +14,26 @@ const report = ref<Report | null>(null);
 const reportRun = ref<RunSummary | null>(null);
 const loading = ref(true);
 const error = ref("");
+/** The run being followed live: the one in progress, or the one just started from this page. */
+const liveRunId = ref<string | null>(null);
+const control = ref<InstanceType<typeof RunControl> | null>(null);
 
 const config = computed(() => overview.value?.tracker.config ?? null);
-const running = computed(() => overview.value?.runInProgress ?? null);
 const latest = computed(() => overview.value?.latestRun ?? null);
+const running = computed(() => Boolean(liveRunId.value));
 
 const stats = computed(() => {
-	if (!report.value) return [];
-	const s = report.value.stats;
-	return [
-		{ label: "Ranked", value: report.value.items.length },
-		{ label: "New", value: report.value.items.filter((item) => item.section === "new").length },
-		{ label: "Pages fetched", value: s.fetched },
-		{ label: "Reused", value: s.skipped },
-		{ label: "Blocked", value: s.rejected },
-	];
+	const current = report.value;
+	if (!current) return [];
+	const ranked = { label: "Ranked", value: current.items.filter((item) => !("stale" in item) || !item.stale).length };
+	const fresh = { label: "New", value: current.items.filter((item) => item.section === "new" && (!("stale" in item) || !item.stale)).length };
+	if (current.schemaVersion === 1) {
+		const s = current.stats;
+		return [ranked, fresh, { label: "Pages fetched", value: s.fetched }, { label: "Reused", value: s.skipped }, { label: "Blocked", value: s.rejected }];
+	}
+	const claims = current.stats.claims;
+	const first = current.stale ? { label: "Shown (stale)", value: current.items.length } : ranked;
+	return [first, fresh, { label: "Supported", value: claims.supported }, { label: "Not supported", value: claims.unsupported + claims.unreachable }, { label: "Unverified", value: claims.unverified }];
 });
 
 async function load() {
@@ -36,9 +41,19 @@ async function load() {
 	overview.value = nextOverview;
 	report.value = latestReport.report;
 	reportRun.value = latestReport.run;
+	if (nextOverview.runInProgress) liveRunId.value = nextOverview.runInProgress.id;
 }
 
-const polling = usePolling(load, () => Boolean(running.value));
+function onStarted(runId: string) {
+	liveRunId.value = runId;
+	void load().catch(() => undefined);
+}
+
+async function onFinished() {
+	liveRunId.value = null;
+	await load().catch((err) => (error.value = err instanceof ApiError ? err.message : "Could not load the report."));
+	void control.value?.check();
+}
 
 onMounted(async () => {
 	void refresh().catch(() => undefined);
@@ -48,7 +63,6 @@ onMounted(async () => {
 		error.value = err instanceof ApiError ? err.message : "Could not load the tracker.";
 	} finally {
 		loading.value = false;
-		polling.restart();
 	}
 });
 </script>
@@ -97,26 +111,10 @@ onMounted(async () => {
 					</div>
 				</div>
 
-				<div class="card overview-run">
-					<div class="row between">
-						<span class="eyebrow">{{ running ? "02 / In progress" : "02 / Latest run" }}</span>
-						<RunStatusBadge v-if="running" status="running" />
-						<RunStatusBadge v-else-if="latest" :status="latest.status" :stale="latest.errorCode === 'abandoned'" />
-					</div>
-					<template v-if="running">
-						<p class="muted">Started {{ formatDateTime(running.startedAt) }}. This page refreshes automatically.</p>
-					</template>
-					<template v-else-if="latest">
-						<p class="run-when">{{ formatDateTime(latest.startedAt) }}</p>
-						<p class="subtle" v-if="latest.finishedAt">Took {{ formatDuration(new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) }}</p>
-						<RouterLink :to="`/runs/${latest.id}`" class="subtle">Details, sources, and trace →</RouterLink>
-					</template>
-					<p v-else class="muted">No runs yet.</p>
-					<div class="run-cmd">
-						<span class="command">npm run tracker:run</span>
-					</div>
-				</div>
+				<RunControl ref="control" :running="running" :latest="latest" :config="config" @started="onStarted" />
 			</section>
+
+			<LiveRun v-if="liveRunId" :run-id="liveRunId" @finished="onFinished" />
 
 			<template v-if="report && reportRun">
 				<div class="stats" aria-label="Latest report at a glance">
@@ -128,15 +126,14 @@ onMounted(async () => {
 				<ReportSections :report="report" />
 			</template>
 
-			<section v-else class="card first-run">
+			<section v-else-if="!liveRunId" class="card first-run">
 				<div class="first-run-top"><span class="eyebrow">Your shortlist starts here</span><span class="stamp">Awaiting first report</span></div>
 				<div class="empty">
 					<span class="empty-symbol" aria-hidden="true">↗</span>
 					<h2>Good things are worth finding.</h2>
-					<p>Start a run from your terminal.<br />Your ranked, source-backed shortlist will land right here.</p>
-					<span class="command">npm run tracker:run</span>
+					<p>Press <strong>Run tracker</strong> above.<br />Your ranked shortlist, every claim checked against its source, will land right here.</p>
 				</div>
-				<div class="research-steps"><span><b>01</b> Read the job boards</span><span><b>02</b> Rank the matches</span><span><b>03</b> See what changed</span></div>
+				<div class="research-steps"><span><b>01</b> Read the job boards</span><span><b>02</b> Check every claim</span><span><b>03</b> See what changed</span></div>
 			</section>
 		</template>
 	</div>
@@ -189,9 +186,6 @@ onMounted(async () => {
 }
 .overview-target {
 	border-top: 2px solid var(--accent);
-}
-.overview-run {
-	border-top: 2px solid var(--pink);
 }
 .first-run {
 	background: linear-gradient(140deg, rgba(245, 220, 82, 0.035), transparent 60%), var(--surface);
@@ -246,8 +240,7 @@ onMounted(async () => {
 	gap: var(--space-4);
 }
 
-.overview-target,
-.overview-run {
+.overview-target {
 	align-content: start;
 	gap: var(--space-4);
 }
@@ -301,16 +294,6 @@ onMounted(async () => {
 
 .between {
 	justify-content: space-between;
-}
-
-.run-when {
-	font-size: 15px;
-	font-weight: 500;
-}
-
-.run-cmd {
-	margin-top: auto;
-	padding-top: var(--space-2);
 }
 
 .stats {

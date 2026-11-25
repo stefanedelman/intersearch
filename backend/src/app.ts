@@ -10,6 +10,7 @@ import { usersRouter } from "./routes/users.routes";
 import { trackerRouter } from "./routes/tracker.routes";
 import type { AuthProvider } from "./services/auth-provider";
 import { createAuthService } from "./services/auth.service";
+import { createJobRunner, settingsFromEnv, type JobRunner } from "./orchestrator/jobs";
 
 declare module "express-serve-static-core" {
 	interface Request {
@@ -17,7 +18,8 @@ declare module "express-serve-static-core" {
 	}
 }
 
-export function createApp(deps: { authProvider: AuthProvider }) {
+/** `runner`: the orchestrator's background job runner; defaults to one configured from the environment. */
+export function createApp(deps: { authProvider: AuthProvider; runner?: JobRunner }) {
 	const env = serverEnv();
 	const authService = createAuthService(deps.authProvider);
 	const authenticate = requireAuth(deps.authProvider, authService);
@@ -54,7 +56,7 @@ export function createApp(deps: { authProvider: AuthProvider }) {
 
 	app.use("/api/auth", authRouter(authService, authenticate));
 	app.use("/api/users", usersRouter(authService, authenticate));
-	app.use("/api/tracker", trackerRouter(authenticate));
+	app.use("/api/tracker", trackerRouter(authenticate, deps.runner ?? createJobRunner(settingsFromEnv())));
 
 	app.use((_req, res) => {
 		res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found." } });

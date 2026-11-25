@@ -109,3 +109,30 @@ ranking:
   location_weight: 20
   skills_weight: 15
   freshness_weight: 5
+
+# Assignment 2: how the orchestrator runs one run (researcher + verifier). The `limits` above stay
+# the researcher's own ceilings; its share of total_budget can only lower them.
+orchestration:
+  total_budget:          # the whole run; the orchestrator never sends a request it cannot cover
+    max_steps: 24        # a step is one model call
+    max_fetches: 24      # a fetch is one HTTP request to a web page, each redirect hop included
+    max_tokens: 190000
+  split:
+    researcher: 0.7      # the verifier gets what is left after the researcher is charged
+  min_verify_share:      # a verify request smaller than this is not sent (its claims stay unverified)
+    steps: 1
+    fetches: 1
+    tokens: 2000
+  time_budget_ms:
+    researcher: 480000   # 1B run 1 took 355 s, mostly waiting out Groq's per-minute token limit
+    verifier_per_chunk: 45000
+  run_deadline_ms: 900000
+  timeouts:
+    grace_ms: 15000              # client timeout = time_budget_ms + grace
+    verifier_cold_start_ms: 75000  # + this until the verifier has answered once (Render free tier)
+    healthz_wake_ms: 90000
+  retries:
+    max_attempts: 3
+    base_ms: 1000
+    max_backoff_ms: 20000
+    max_retry_after_ms: 60000

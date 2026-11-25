@@ -1,17 +1,20 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { comparisonKey, configHash, parseConfig } from "../../src/tracker/config";
-import { canonicalizeUrl, identityFor, quoteAppearsIn } from "../../src/tracker/domain/normalize";
-import { extractObservation } from "../../src/tracker/domain/facts";
-import { scoreFacts } from "../../src/tracker/domain/rank";
-import { buildReport, renderMarkdown, type Candidate } from "../../src/tracker/domain/report";
-import { extract } from "../../src/tracker/fetch/extract";
-import { Budget, BudgetExhausted } from "../../src/tracker/budget";
-import { classifyHttpFailure, ProviderError, withRetries } from "../../src/tracker/failure";
-import { redact } from "../../src/lib/logger";
-import type { TrackerStateDto } from "../../src/contracts/tracker";
-import { assembleCandidates } from "../../src/tracker/finalize";
-import { emptyMemory } from "../../src/tracker/tools/context";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { comparisonKey, configHash, parseConfig } from "../../src/shared/config";
+import { canonicalizeUrl, identityFor, quoteAppearsIn } from "../../src/researcher/domain/normalize";
+import { extractObservation } from "../../src/researcher/domain/facts";
+import { scoreFacts } from "../../src/researcher/domain/rank";
+import { extract } from "../../src/shared/fetch/extract";
+import { Budget, BudgetExhausted } from "../../src/researcher/budget";
+import { classifyHttpFailure, ProviderError } from "../../src/shared/providers/failure";
+import { withRetries } from "../../src/researcher/failure";
+import { redact } from "../../src/shared/redact";
+import { assembleCandidates, buildDevelopments } from "../../src/researcher/developments";
+import { RunStore } from "../../src/researcher/store";
+import { emptyMemory } from "../../src/researcher/tools/context";
 import { ACME_CONFIG_YAML } from "../fixtures/acme";
 
 const config = parseConfig(ACME_CONFIG_YAML);
@@ -117,42 +120,48 @@ describe("ranking", () => {
 	});
 });
 
-describe("report sections", () => {
-	const candidate = (jobId: string, title: string): Candidate => {
-		const observation = observe(title, "New York, NY", "<p>Use Python and Go.</p>", jobId);
-		return { observation, sources: [observation.source], firstSeenAt: null, reverified: true };
+describe("developments for the orchestrator", () => {
+	const observeAs = (jobId: string, title: string, location = "New York, NY", body = "<p>Summer 2027. Use Python and Go. Pay: $55 per hour.</p>") => {
+		const observation = observe(title, location, body, jobId);
+		const id = `00000000-0000-4000-8000-${jobId.padStart(12, "0")}`;
+		return { id, observation: { ...observation, evidence: observation.evidence.map((item) => ({ ...item, sourceDocumentId: id })) } };
 	};
-	const stats = { fetched: 0, skipped: 0, rejected: 0, failed: 0, searches: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, searchCredits: 0, networkRequests: 0, elapsedMs: 0 };
-	const runId = "22222222-2222-4222-8222-222222222222";
-	const baselineRunId = "33333333-3333-4333-8333-333333333333";
 
-	test("new, still, returned, and dropped are distinguished; fewer than K is explained", () => {
-		const report = buildReport({
-			runId,
-			status: "complete",
-			stopReason: null,
+	test("the top k are ranked by code, and every claim cites the page it is about", () => {
+		const memory = emptyMemory();
+		const store = new RunStore();
+		const best = observeAs("1", "Backend Software Engineer Intern (Summer 2027)");
+		const second = observeAs("2", "Software Engineer Intern (Summer 2027)");
+		const excluded = observeAs("3", "Marketing Intern (Summer 2027)");
+		for (const entry of [best, second, excluded]) memory.observations.set(entry.id, entry.observation);
+		store.addDocument({ id: best.id, canonicalUrl: best.observation.source.url, finalUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs/1", title: null, fetchedAt: new Date().toISOString(), contentHash: "x".repeat(64), sourceKind: "json", metadata: null, text: "", httpStatus: 200 });
+
+		const developments = buildDevelopments({
+			memory,
+			store,
 			config,
-			candidates: [candidate("1", "Backend Software Engineer Intern (Summer 2027)"), candidate("2", "Software Engineer Intern (Summer 2027)")],
-			baseline: {
-				runId: baselineRunId,
-				items: [
-					{ identityKey: "greenhouse:acme:1", rank: 1, company: "Acme", title: "Backend Software Engineer Intern (Summer 2027)" },
-					{ identityKey: "greenhouse:acme:9", rank: 2, company: "Acme", title: "Gone Intern" },
-				],
-			},
-			everReported: new Set(["greenhouse:acme:1", "greenhouse:acme:2", "greenhouse:acme:9"]),
-			comparisonReset: false,
-			stats,
-			notes: [],
+			k: 2,
+			modelClaims: [
+				{ sourceDocumentId: best.id, identityKey: best.observation.identity.key, text: "The team builds backend services in Go." },
+				{ sourceDocumentId: best.id, identityKey: best.observation.identity.key, text: "The team builds backend services in Go." },
+			],
 		});
-		assert.deepEqual(report.items.map((item) => item.section), ["still", "returned"]);
-		assert.equal(report.dropped[0]!.identityKey, "greenhouse:acme:9");
-		assert.match(report.dropped[0]!.reason, /not re-verified/);
-		assert.ok(report.notes.some((note) => /does not pad/.test(note)));
-		const markdown = renderMarkdown(report, { trackerName: "T", configHash: "abc" });
-		assert.match(markdown, /## New since last run/);
-		assert.match(markdown, /## Still in top K/);
-		assert.match(markdown, /## Dropped/);
+		assert.deepEqual(developments.map((development) => development.id), ["greenhouse:acme:1", "greenhouse:acme:2"]);
+		const [first] = developments;
+		assert.equal(first!.title, "Acme — Backend Software Engineer Intern (Summer 2027)");
+		assert.match(first!.summary, /Acme lists "Backend Software Engineer Intern \(Summer 2027\)" in New York, NY/);
+		const texts = first!.claims.map((claim) => claim.text);
+		assert.ok(texts.includes('Acme has an open posting titled "Backend Software Engineer Intern (Summer 2027)".'));
+		assert.ok(texts.includes("The position is for Summer 2027."));
+		assert.ok(texts.includes("The posting lists New York, NY as the location."));
+		assert.equal(texts.filter((text) => text === "The team builds backend services in Go.").length, 1, "duplicate claims are dropped");
+		assert.deepEqual(first!.claims.map((claim) => claim.claim_id), first!.claims.map((_, index) => `1.${index + 1}`));
+		for (const claim of first!.claims) assert.equal(claim.source_url, "https://boards-api.greenhouse.io/v1/boards/acme/jobs/1");
+		assert.ok(developments[1]!.claims.every((claim) => claim.claim_id.startsWith("2.")));
+	});
+
+	test("no development is padded in: an empty run has no developments", () => {
+		assert.deepEqual(buildDevelopments({ memory: emptyMemory(), store: new RunStore(), config, k: 5, modelClaims: [] }), []);
 	});
 });
 
@@ -228,7 +237,7 @@ test("a generic careers page title never becomes an empty title quote", () => {
 	assert.match(observation.facts.title, /Software Engineering Intern/);
 });
 
-test("a known posting fetched from a page with fewer facts keeps the facts from its last saved record", () => {
+test("the same posting seen on two pages in one run is one development; missing facts come from the richer page", () => {
 	const record = observe("Software Engineering Intern (Summer 2027)", "New York, NY", "<p>Build backend services in Python.</p>");
 	assert.deepEqual(record.facts.locations, ["New York, NY"]);
 	const pageUrl = "https://careers.acme.example/jobs/1001";
@@ -239,13 +248,12 @@ test("a known posting fetched from a page with fewer facts keeps the facts from 
 
 	const memory = emptyMemory();
 	memory.observations.set("22222222-2222-4222-8222-222222222222", page);
-	const priorSource = { sourceDocumentId: docId, url: record.source.url, title: record.source.title, fetchedAt: record.source.fetchedAt };
-	const state = { opportunities: [{ identityKey: record.identity.key, firstSeenAt: new Date().toISOString(), firstReportedAt: null, providerJobId: "1001", lastObservation: { facts: record.facts, evidence: record.evidence, sources: [priorSource] } }] } as unknown as TrackerStateDto;
-	const { candidates, observationInputs } = assembleCandidates({ memory, state, store: null, notes: [], now: new Date() });
+	memory.observations.set(docId, record);
+	const candidates = assembleCandidates(memory);
 
 	assert.equal(candidates.length, 1);
 	assert.deepEqual(candidates[0]!.observation.facts.locations, ["New York, NY"]);
 	const locationQuote = candidates[0]!.observation.evidence.find((item) => item.field === "location");
 	assert.equal(locationQuote?.sourceDocumentId, docId, "the location quote cites the record it came from");
-	assert.ok(observationInputs[0]!.sourceDocumentIds.includes(docId), "that record is listed as a source");
+	assert.equal(candidates[0]!.sources.length, 2);
 });

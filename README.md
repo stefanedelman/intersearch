@@ -106,7 +106,7 @@ Keep the backend running (above). In order:
    npm run tracker:run
    ```
 
-3. **Run it again.** The second run skips pages it already fetched and reports **New since last run**, **Still in top K**, and **Dropped**:
+3. **Run it again.** The second run reuses saved article text, checks fresh company feeds for the previous top matches, and reports **New since last run**, **Still in top K**, and **Dropped**. A match stays marked **Not re-verified** if its company feed could not be checked and its article was not fetched again:
 
    ```bash
    npm run tracker:run

@@ -1,8 +1,8 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
-import { ProviderError } from "../../src/tracker/failure";
-import { createGroqModel } from "../../src/tracker/providers/groq";
+import { ProviderError } from "../../src/shared/providers/failure";
+import { createGroqModel } from "../../src/shared/providers/groq";
 
 const original = getGlobalDispatcher();
 after(() => setGlobalDispatcher(original));

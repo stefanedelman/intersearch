@@ -19,6 +19,8 @@ backend/src/generated/
 # Local tracker artifacts (exported evidence lives in reports/ and traces/)
 runs/
 *.checkpoint.json
+# Live per-service trace logs (export a run's lines into traces/<label>/ for evidence)
+traces/live/
 
 # Hosting and tooling
 .vercel/

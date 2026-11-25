@@ -1,6 +1,6 @@
 // TEST DATA ONLY. A fictional company ("Acme") served by a fake transport so tracker tests run
 // without network access. Never copy these into reports/ or present them as real findings.
-import type { FetchResult, guardedGet } from "../../src/tracker/fetch/transport";
+import type { FetchResult, guardedGet } from "../../src/shared/fetch/transport";
 
 const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
 

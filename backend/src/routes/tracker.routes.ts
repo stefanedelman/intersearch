@@ -1,10 +1,12 @@
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
-import { checkpointBodySchema, finalizeBodySchema, startRunBodySchema } from "../contracts/tracker";
+import { startRunBodySchema } from "../contracts/tracker";
 import { errors } from "../lib/errors";
 import { authOf } from "../middleware/auth";
 import { isUuid, parseBody } from "../middleware/validate";
 import { trackerService } from "../services/tracker.service";
+import type { JobRunner } from "../orchestrator/jobs";
+import { claimLabels } from "../contracts/report";
 
 const pageQuery = z.object({
 	cursor: z.string().optional(),
@@ -25,7 +27,7 @@ function idParam(req: Request, name = "id") {
 	return value;
 }
 
-export function trackerRouter(requireAuth: RequestHandler) {
+export function trackerRouter(requireAuth: RequestHandler, runner: JobRunner) {
 	const router = Router();
 	router.use(requireAuth);
 
@@ -38,22 +40,32 @@ export function trackerRouter(requireAuth: RequestHandler) {
 		res.json(await trackerService.importConfig(authOf(req).userId, body.config));
 	});
 
-	router.get("/state", async (req, res) => {
-		const runId = typeof req.query.runId === "string" && isUuid(req.query.runId) ? req.query.runId : undefined;
-		res.json(await trackerService.state(authOf(req).userId, runId));
-	});
-
-	router.get("/documents/:id", async (req, res) => {
-		res.json(await trackerService.document(authOf(req).userId, idParam(req)));
-	});
-
 	router.get("/report/latest", async (req, res) => {
 		res.json(await trackerService.latestReport(authOf(req).userId));
 	});
 
+	// 202: the run continues in the background; poll GET /runs/:id for phase and worker calls.
 	router.post("/runs", async (req, res) => {
 		const body = parseBody(startRunBodySchema, req.body);
-		res.status(201).json(await trackerService.startRun(authOf(req).userId, body.idempotencyKey));
+		res.status(202).json(await trackerService.launchRun(authOf(req).userId, body.idempotencyKey, runner));
+	});
+
+	router.post("/runs/:id/cancel", async (req, res) => {
+		res.status(202).json(await trackerService.cancelRun(authOf(req).userId, idParam(req), runner));
+	});
+
+	router.get("/runs/:id/claims", async (req, res) => {
+		const query = z.object({ label: z.enum(claimLabels).optional() }).safeParse(req.query);
+		if (!query.success) throw errors.badRequest(`label must be one of ${claimLabels.join(", ")}.`);
+		res.json(await trackerService.listClaims(authOf(req).userId, idParam(req), query.data.label));
+	});
+
+	router.get("/workers", async (_req, res) => {
+		res.json(await trackerService.workers(runner));
+	});
+
+	router.post("/workers/verifier/wake", async (req, res) => {
+		res.json(await trackerService.wakeVerifier(authOf(req).userId, runner));
 	});
 
 	router.get("/runs", async (req, res) => {
@@ -77,16 +89,6 @@ export function trackerRouter(requireAuth: RequestHandler) {
 	router.get("/runs/:id/trace", async (req, res) => {
 		const { cursor, limit } = page(req, 200);
 		res.json(await trackerService.listTrace(authOf(req).userId, idParam(req), cursor, limit));
-	});
-
-	router.post("/runs/:id/checkpoint", async (req, res) => {
-		const runId = idParam(req);
-		res.json(await trackerService.checkpoint(authOf(req).userId, runId, parseBody(checkpointBodySchema, req.body)));
-	});
-
-	router.post("/runs/:id/finalize", async (req, res) => {
-		const runId = idParam(req);
-		res.json(await trackerService.finalize(authOf(req).userId, runId, parseBody(finalizeBodySchema, req.body)));
 	});
 
 	router.post("/reset", async (req, res) => {

@@ -1,0 +1,36 @@
+# Render Blueprint for the Assignment 2 verifier (ORCHESTRATION_PLAN.md §12).
+# Only the verifier is deployed; the API + orchestrator and the researcher run on the laptop.
+# Create it in Render: New → Blueprint → this repository. Render asks for the three secret values
+# (sync: false) once; they live only in Render's environment settings, never in the repo.
+services:
+  - type: web
+    name: intersearch-verifier
+    runtime: node
+    plan: free
+    region: virginia
+    rootDir: backend
+    # --include=dev: TypeScript is a devDependency and Render may install in production mode.
+    # build:verifier compiles only src/verifier and src/shared (no Prisma, no database).
+    buildCommand: npm ci --include=dev && npm run build:verifier
+    startCommand: node dist/verifier/server.js
+    healthCheckPath: /healthz
+    # Redeploy only when verifier code (or what it is built from) changes.
+    buildFilter:
+      paths:
+        - backend/src/verifier/**
+        - backend/src/shared/**
+        - backend/package.json
+        - backend/package-lock.json
+        - backend/tsconfig.json
+        - backend/tsconfig.verifier.json
+    envVars:
+      - key: APP_ENV
+        value: production # trace lines go to stdout (Render's log), not to a file
+      - key: NODE_VERSION
+        value: "22"
+      - key: VERIFIER_TOKEN
+        sync: false # the same value as VERIFIER_TOKEN in backend/.env.local
+      - key: VERIFIER_GROQ_API_KEY
+        sync: false # a Groq key for the verifier, ideally its own (spend-capped or unfunded free tier)
+      - key: VERIFIER_MODEL
+        sync: false # a Groq model id different from the researcher's (config.yaml model.id)
