@@ -179,6 +179,19 @@ Step 12 is done for the researcher (2026-11-25); the verifier's saved table wait
   - Both pass against the demo workers too (9/9 and 10/10).
 - **Left:** after the deploy, run `npm run contract-check -- --target verifier --save`. It uses `VERIFIER_URL` from `backend/.env`.
 
+Steps 11 and 12 are finished (2026-11-26):
+- **Branch:** the work is committed on `a2-orchestration` (`d91be19`, then `2747dd4`) and pushed. `main` is unchanged.
+- **Database:** Supabase was resumed and the migration applied. All 13 earlier reports still validate, and `npm run verify` passes 29/29.
+- **Dry run:** a real dry run as `smoketest1` (`998bbcfc`) completed end to end. The researcher found only 2 of K=5, so `config.yaml` got sharper fetch instructions and `max_steps` 18, with a 30-step run budget. The comparison key is unchanged.
+- **Local port bug:** fixed. A local verifier now ignores the API's `PORT` from `backend/.env`.
+- **Render:** the verifier runs as Blueprint `intersearch-verifier` from the public repo URL and branch `a2-orchestration`. No GitHub OAuth grant was needed.
+  - URL: `https://intersearch-verifier.onrender.com`.
+  - Model: `openai/gpt-oss-120b`, chosen over `gpt-oss-20b` after both passed locally. It uses the researcher's Groq key (free-tier limits are per model, so there's no sharing).
+  - Secrets were pasted by the user.
+  - The first deploy was live about 30 s after `healthz` polling began.
+- **Smoke test against Render:** 9/9. The real verify took 4.2 s and 721 tokens.
+- **Contract check against Render:** **10/10**, saved to `docs/contract-check-verifier-2026-11-26.md`.
+
 ---
 
 ## 0. Decisions (recommended defaults; confirm before step 1)

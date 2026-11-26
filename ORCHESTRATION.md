@@ -50,14 +50,38 @@ Evidence:
 
 ## 2. The network
 
-⟨run⟩ Table of every cross-service call in a2-run1, from `traces/a2-run1/orchestrator.jsonl` (`out` lines): service, endpoint, attempt, status, caller-side latency.
+**Every cross-service call in a2-run1** (run `ac6be8df`, started from the dashboard as NYUgrader at 09:45:02 UTC with the verifier asleep; `traces/a2-run1/orchestrator.jsonl`, `out` lines; latency measured by the orchestrator). The worker-side processing time comes from each worker's own `in` line.
 
-⟨run⟩ Where the time went: research (mostly Groq per-minute pacing) against verification against cold start. Whether the `/healthz` wake (sent at run start, in parallel with research) hid the cold start.
+| # | Call | Attempt | Status | Caller latency | Worker processing | Charged |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `GET verifier /healthz` (wake, sent at run start) | 1 | 200 | **15,068 ms** | — | — |
+| 2 | `POST researcher /research` | 1 | 200 (`partial`) | 404,518 ms | 404,471 ms | 18 steps, 14 fetches, 74,120 tokens |
+| 3 | `POST verifier /verify` (Figma, 4 claims) | 1 | 200 (`complete`) | 5,181 ms | 5,032 ms | 1 step, 1 fetch, 1,367 tokens |
+| 4 | `POST verifier /verify` (Stripe, 2 claims) | 1 | 200 (`complete`) | 2,047 ms | 2,004 ms | 1 step, 1 fetch, 1,759 tokens |
+| 5 | `GET researcher /trace` | 1 | 200 | 5 ms | — | — |
+| 6 | `GET verifier /trace` | 1 | 200 | 33 ms | — | — |
+
+No request needed a retry. The budget charged was 20 of 30 steps, 14 of 30 fetches and 77,246 of 190,000 tokens, each `request_id` once (the `ledger charge` lines).
+
+**Where the time went** (413.0 s end to end):
+
+| Part | Time | Share |
+| --- | --- | --- |
+| Research | 404.5 s | 98 % |
+| … of which waiting for Groq's 8K tokens-per-minute limit (researcher `budget rate_wait` lines) | 384.6 s | 93 % |
+| Verification (two requests, sequential) | 7.2 s | 1.7 % |
+| Verifier cold start | 15.1 s, fully overlapped with research | 0 s added |
+| Report, save, trace collection | about 1 s | — |
+
+- **The whole run is bound by one number: Groq's free-tier 8K tokens per minute on the researcher's model.** 18 model calls with growing context cost 74K tokens, which takes over nine minutes of token allowance. The pacing spread them over 404 s, and the actual model and page latency was about 20 s.
+- **Cold start cost: 15.1 s.** The verifier had been idle for about 40 minutes and Render had put it to sleep (the dashboard showed it "asleep" at run start). The orchestrator sends `GET /healthz` with a 90 s timeout at the start of every run, in parallel with research. It answered after 15.1 s, while the researcher was still on its first steps, so the cold start added nothing to the run. Without the pre-warm, the first `/verify` would have paid it: its client timeout includes a 75 s cold-start allowance for exactly that case.
+- **Network overhead is small.** The caller-side latency exceeds the worker's own processing time by 47 ms for the researcher (localhost) and by 43–149 ms for Render (TLS and the Render proxy over the internet).
+- **First request after waking.** The first `/verify` spent 3.4 s between the page fetch and the model call: page extraction (jsdom) on a just-woken instance, with modules still loading. The second request had no such gap.
 
 **How the timeouts were derived:**
-- **Researcher:** `time_budget_ms` = 480 s. The 1B run 1 took 355 s, almost all of it waiting out Groq's 8K tokens-per-minute limit. The client timeout is 480 + 15 s grace.
-- **Verifier:** 45 s per development. One fetch plus one small model call measured 0.6–1.2 s warm (`docs/verifier-smoke.md`), and the budget leaves room for a slow page and one retry of a malformed model reply. The client timeout is 45 + 15 s, plus 75 s until the verifier has answered once in the run: Render's free instance can take about a minute to wake ⟨cold start measured: … s⟩.
-- **Long requests:** the orchestrator uses an undici `Agent` with no header or body timeout, because the default 300 s would cut off a long research request; each attempt's own `AbortSignal` bounds it instead.
+- **Researcher:** `time_budget_ms` = 480 s. The 1B run 1 took 355 s, almost all of it waiting out Groq's per-minute limit; a2-run1 took 404 s with 18 steps. The client timeout is 480 + 15 s grace.
+- **Verifier:** 45 s per development. One fetch plus one small model call measured 2–5 s here (`docs/verifier-smoke.md`: 0.6–4.2 s), and the budget leaves room for a slow page and one retry of a malformed model reply. The client timeout is 45 + 15 s, plus 75 s until the verifier has answered once in the run (cold start; measured 15.1 s here, but it varies, so the allowance is generous).
+- **Long requests:** the orchestrator uses an undici `Agent` with no header or body timeout, because the default 300 s would have cut off this 404 s research request; each attempt's own `AbortSignal` bounds it instead.
 - **Retries:** at most 3 attempts with exponential backoff (1 s × 2ⁿ, ±20 % jitter, capped at 20 s).
   - `Retry-After` is honoured exactly. If it is longer than 60 s, the request ends instead of retrying early.
   - No retry starts if it could not finish before the run deadline (15 minutes).

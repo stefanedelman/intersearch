@@ -291,7 +291,7 @@ export async function runAgentLoop(input: {
 					const finishArgs = parsed.args as FinishArgs;
 					const startedAt = new Date();
 					const verdict = validateFinish(ctx.memory, finishArgs, (id) => ctx.store?.getById(id)?.text ?? null);
-					ctx.trace.record({ category: "tool", step: ctx.step, tool: "finish", arguments: finishArgs, startedAt, latencyMs: Date.now() - startedAt.getTime(), status: verdict.ok ? "ok" : "invalid", detail: { errors: verdict.errors, acceptedNotes: verdict.notes.length, droppedNotes: verdict.droppedNotes } });
+					ctx.trace.record({ category: "tool", step: ctx.step, tool: "finish", arguments: finishArgs, startedAt, latencyMs: Date.now() - startedAt.getTime(), status: verdict.ok ? "ok" : "invalid", detail: { errors: verdict.errors, acceptedNotes: verdict.notes.length, droppedNotes: verdict.droppedNotes, claims: verdict.claims.length, droppedClaims: verdict.droppedClaims } });
 					if (!verdict.ok) {
 						messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: "finish rejected", problems: verdict.errors, hint: "Use source_id values returned by fetch_article in this run." }) });
 						continue;

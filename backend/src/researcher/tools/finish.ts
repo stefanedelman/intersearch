@@ -8,7 +8,10 @@ export const finishArgsSchema = z.object({
 			z.object({
 				source_id: z.string().min(1).max(100),
 				supporting_quote: z.string().max(300).optional(),
-				claims: z.array(z.string().trim().min(8).max(300)).max(4).optional(),
+				// Lenient on purpose: a claim that is too short, too long, or past the fourth is dropped
+				// in validateFinish instead of rejecting the whole finish call (which, on the last step,
+				// would end the run without the model's selection).
+				claims: z.array(z.string().max(2000)).max(20).optional(),
 			}).strict(),
 		)
 		.max(20),
@@ -25,18 +28,31 @@ export type ModelClaim = { sourceDocumentId: string; identityKey: string; text: 
  * a page cannot prove a model-written claim is true, so claims are not checked here: each one is
  * sent, with the URL of the page it is about, to the independent verifier. Ranking stays code-owned.
  */
+export const MAX_CLAIMS_PER_CANDIDATE = 4;
+
+/**
+ * Accepts the candidates that name a page fetched in this run and drops the rest (reported in
+ * `errors`). The call is rejected only when no candidate is usable, so one bad source_id does not
+ * throw away the model's whole selection. Claims outside 8–300 characters, and any past the
+ * fourth per candidate, are dropped and counted.
+ */
 export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: (id: string) => string | null) {
 	const errors: string[] = [];
 	const notes: AcceptedNote[] = [];
 	const claims: ModelClaim[] = [];
 	let droppedNotes = 0;
+	let droppedClaims = 0;
+	let accepted = 0;
 	for (const candidate of args.candidates) {
 		const observation = memory.observations.get(candidate.source_id);
 		if (!observation) {
 			errors.push(`source_id ${candidate.source_id} was not fetched in this run`);
 			continue;
 		}
-		for (const text of candidate.claims ?? []) claims.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, text: text.trim() });
+		accepted += 1;
+		const usable = (candidate.claims ?? []).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => text.length >= 8 && text.length <= 300);
+		droppedClaims += (candidate.claims ?? []).length - Math.min(usable.length, MAX_CLAIMS_PER_CANDIDATE);
+		for (const text of usable.slice(0, MAX_CLAIMS_PER_CANDIDATE)) claims.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, text });
 		if (candidate.supporting_quote) {
 			const text = sourceText(candidate.source_id) ?? "";
 			if (quoteAppearsIn(candidate.supporting_quote, text)) {
@@ -46,5 +62,6 @@ export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: 
 			}
 		}
 	}
-	return { ok: errors.length === 0, errors, notes, claims, droppedNotes };
+	const ok = accepted > 0 || args.candidates.length === 0;
+	return { ok, errors, notes, claims, droppedNotes, droppedClaims };
 }

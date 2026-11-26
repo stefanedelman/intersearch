@@ -202,6 +202,54 @@ describe("POST /research", () => {
 	});
 });
 
+describe("finish is lenient where strictness would lose the run's result", () => {
+	test("one unknown source_id and out-of-range claims are dropped, not the whole finish; the trace shows what happened", async () => {
+		const script: ScriptStep[] = [
+			{ tool: "list_company_jobs", args: { company_id: "acme" } },
+			{ tool: "fetch_article", args: { url: DETAIL(1001) } },
+			{
+				tool: "finish",
+				args: (messages: ModelMessage[]) => ({
+					candidates: [
+						{ source_id: "made-up-id" },
+						{
+							source_id: fetchedSourceIds(messages).get(DETAIL(1001)),
+							claims: ["short", "The intern builds backend services in Go and Python.", "x".repeat(400), "The hourly pay is $52 per hour.", "The role is based in New York, NY.", "The team works on payments infrastructure.", "One claim too many for this posting."],
+						},
+					],
+				}),
+			},
+		];
+		const { send, body, log } = setup(script);
+		const sent = body();
+		const res = await send(sent);
+		assert.equal(res.body.status, "complete", "an accepted finish completes the run");
+		const texts = (res.body.result.developments as ResearchResult["developments"]).flatMap((development) => development.claims.map((claim) => claim.text));
+		assert.ok(texts.includes("The intern builds backend services in Go and Python."));
+		assert.ok(texts.includes("The team works on payments infrastructure."), "the fourth usable claim is kept");
+		assert.ok(!texts.includes("One claim too many for this posting."), "claims past the fourth are dropped");
+		assert.ok(!texts.some((text) => text === "short" || text.startsWith("xxx")));
+		const finish = log.lines({ requestId: sent.request_id }).find((line) => line.endpoint_or_tool === "tool finish");
+		assert.equal(finish?.status, "ok");
+		assert.deepEqual((finish?.detail as { claims: number; dropped_claims: number; errors: string[] }).claims, 4);
+		assert.match((finish?.detail as { errors: string[] }).errors[0]!, /made-up-id/);
+	});
+
+	test("a finish with no usable candidate is still rejected, so the model can correct it", async () => {
+		const script: ScriptStep[] = [
+			{ tool: "fetch_article", args: { url: DETAIL(1001) } },
+			{ tool: "finish", args: { candidates: [{ source_id: "made-up-id" }] } },
+			{ tool: "finish", args: (messages: ModelMessage[]) => ({ candidates: [{ source_id: fetchedSourceIds(messages).get(DETAIL(1001)) }] }) },
+		];
+		const { send, body, log, model } = setup(script);
+		const sent = body();
+		const res = await send(sent);
+		assert.equal(res.body.status, "complete");
+		assert.equal(model.calls.length, 3);
+		assert.deepEqual(log.lines({ requestId: sent.request_id }).filter((line) => line.endpoint_or_tool === "tool finish").map((line) => line.status), ["invalid", "ok"]);
+	});
+});
+
 describe("service boundaries", () => {
 	const sources = (dir: string): string[] =>
 		fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? sources(path.join(dir, entry.name)) : entry.name.endsWith(".ts") ? [path.join(dir, entry.name)] : []));

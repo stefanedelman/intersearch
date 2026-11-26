@@ -7,6 +7,7 @@ Nothing here comes from memory. Fill in each value from the provider's own page 
 | Provider | Plan | Hard spend cap | Verified on |
 | --- | --- | --- | --- |
 | Groq | Free | Free tier has no billing, so nothing can be charged. Confirmed by response headers matching free-plan limits (1,000 RPD, 8,000 TPM). | 2026-10-05 |
+| Render | Free (web service `intersearch-verifier`) | Created on the free instance type (`plan: free` in `render.yaml`); it sleeps after 15 idle minutes rather than scaling. The workspace's billing settings were not checked. | 2026-11-26 |
 | Tavily | Researcher (free) | Free credits only: `GET /usage` reports `paygo_usage: 0`, no PayGo limit, and no per-key limit. The config caps search at 4 credits per run. | 2026-10-05 |
 
 A notification threshold is not a hard cap. If a provider can't enforce a cap, use its unfunded free tier.
@@ -17,10 +18,11 @@ A notification threshold is not a hard cap. If a provider can't enforce a cap, u
 | --- | --- | --- | --- |
 | Groq, model `qwen/qwen3.8-27b` | requests per minute / per day | 30 / 1,000 (free plan; headers confirm 1,000 RPD) | https://console.groq.com/docs/rate-limits, checked 2026-10-05 |
 | Groq, model `qwen/qwen3.8-27b` | tokens per minute / per day | 8,000 / 200,000 (free plan; headers confirm 8,000 TPM; limits are per model). TPM is charged at request time as prompt tokens + `max_completion_tokens`. | same |
+| Groq, model `openai/gpt-oss-120b` (verifier, Assignment 2) | requests per day / tokens per minute | 1,000 / 8,000 (free plan; `x-ratelimit-limit-requests` and `x-ratelimit-limit-tokens` headers, 2026-11-26). Limits are per model, so the verifier does not use the researcher's `qwen` allowance even with the same key. | response headers, 2026-11-26 |
 | Tavily | credits per month | 1,000 (Researcher plan, from `GET /usage`; 0 used on 2026-10-05) | https://docs.tavily.com |
 | Greenhouse Job Board API | none published; public GET | — | https://docs.greenhouse.io/job-board.html |
 
-Groq list prices for `qwen/qwen3.8-27b` (from `GET /models`, 2026-10-05): $0.80 per million input tokens, $4.00 per million output tokens. Use these for the paid-equivalent cost.
+Groq list prices for `qwen/qwen3.8-27b` (from `GET /models`, 2026-10-05): $0.80 per million input tokens, $4.00 per million output tokens. For `openai/gpt-oss-120b` (from `GET /models/openai/gpt-oss-120b`, 2026-11-26): $0.15 per million input tokens, $0.60 per million output tokens; it lists `json_mode` among its features. Use these for the paid-equivalent cost.
 
 ## Per-run usage (measured)
 

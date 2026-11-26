@@ -98,6 +98,20 @@ function traceSink(ctx: WorkContext<ResearchResult>, modelId: string) {
 				error_code: event.errorCode,
 				detail: { tool: event.tool, ...(typeof detail.redirectHop === "number" && detail.redirectHop > 0 ? { redirect_hop: detail.redirectHop } : {}) },
 			});
+		} else if (event.category === "tool") {
+			// Tool calls are not network calls, but they are what the model did with each step; a
+			// rejected finish (and why) must be visible in the evidence trace.
+			const errors = Array.isArray(detail.errors) ? (detail.errors as unknown[]).slice(0, 5).map((error) => String(error).slice(0, 200)) : undefined;
+			ctx.trace({
+				ts: new Date(event.startedAt),
+				step: event.step,
+				endpoint_or_tool: `tool ${event.tool ?? "unknown"}`,
+				status: event.status,
+				latency_ms: event.latencyMs,
+				tokens: null,
+				error_code: event.errorCode,
+				...(event.tool === "finish" || errors ? { detail: { ...(errors ? { errors } : {}), ...(typeof detail.claims === "number" ? { claims: detail.claims, dropped_claims: detail.droppedClaims } : {}) } } : {}),
+			});
 		} else if (event.category === "budget") {
 			ctx.trace({
 				ts: new Date(event.startedAt),
