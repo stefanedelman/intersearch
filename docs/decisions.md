@@ -164,3 +164,44 @@ See [AGENT.md](../AGENT.md) section 1.
 **Choice:** run 1 uses Qwen, with `max_steps: 14` so the finish-only last step comes before the token budget runs low, and `max_total_tokens: 150000` so the conservative reservation for that final call fits.
 
 **Tradeoff:** fewer steps means fewer postings fetched per run. Qwen costs more at paid rates ($0.80 / $4.00 per million input/output tokens), which is irrelevant on the free tier.
+
+## Assignment 2: three services, one contract (2026-11-24)
+
+**Problem:** split the tracker into an orchestrator, a researcher, and a verifier that talk only over HTTP, with idempotency, deadlines, one run budget, and graceful failure.
+
+**Choice:**
+- The orchestrator runs inside the Express API process, as a background job started from the dashboard: it already owns the database, auth, and the UI.
+- The researcher (the 1B loop) is stateless and runs on the laptop; the verifier runs on Render's free tier.
+- They share only `backend/src/shared/contract.ts` and libraries that call no service. A test enforces the import boundary.
+- The 1B write path (`/state`, `/documents`, `/checkpoint`, `/finalize`, `tracker:sync`) was removed; 1B runs and reports stay readable as `schemaVersion: 1`.
+
+**Tradeoff:**
+- A stateless researcher loses 1B's cross-run memory (cached pages, carried-forward postings), so each run must rediscover postings within its step budget. Both evidence runs ranked 2 of K = 5.
+- The idempotency store is in memory: simple and free, but a Render restart between attempts recomputes the request (charged once, spent twice). See ORCHESTRATION.md §3.
+
+## Verifier model `openai/gpt-oss-120b` on the researcher's key (2026-11-26)
+
+**Problem:** the verifier needs a Groq model that supports JSON mode and doesn't use up the researcher's free per-minute allowance.
+
+**Choice:** `openai/gpt-oss-120b`, on the same key. Groq's free limits are per model, so it has its own 8K TPM. `gpt-oss-20b` also passed the local smoke test (648 vs 753 tokens), but the larger model is the stronger judge, and verification costs about 3 % of a run either way.
+
+**Tradeoff:** one key for both services means rotating it changes both. A second key was left as an open question.
+
+## Baseline is the last *fresh* run (2026-11-25)
+
+**Problem:** a run that is partial only because the verifier failed still has a real top K. Comparing only against complete runs would make the next run report already-seen postings as new.
+
+**Choice:** a run is compared with the latest earlier run whose top K came from research: a complete run, or an orchestrated partial run that wasn't stale. 1B partial runs keep their old meaning and are not used.
+
+**Tradeoff:** a researcher-partial run (budget hit) also becomes a baseline, so postings it missed show as dropped and later as returned. That is accurate, but noisier.
+
+## `finish` is lenient (2026-11-26)
+
+**Problem:** both A2 evidence runs ended on the step limit without an accepted `finish`. The tool-call trace showed `invalid_tool_call` on the last step: Assignment 2 had made `finish`'s argument schema strict about extra fields, quote length, and claims, and a rejected `finish` on the last step loses the model's selection and all model-written claims.
+
+**Choice:**
+- Unknown fields are ignored (stripped, so model free text outside the schema still never reaches the report).
+- Over-long quotes and claims, and claims past the fourth, are dropped and counted.
+- Candidates with unknown `source_id`s are dropped. The call is rejected only if no candidate is usable.
+
+**Tradeoff:** the model gets less feedback about malformed arguments. The 1B safety property (an invented "reason" can't reach the report) is kept and tested.

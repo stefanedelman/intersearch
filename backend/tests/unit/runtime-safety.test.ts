@@ -81,9 +81,12 @@ test("a dense Unicode prompt cannot pass the token cap using the old average est
 	assert.equal(ctx.budget.snapshot.networkRequests, 0, "a blocked call did not make a round trip");
 });
 
-test("finish rejects a fabricated salary reason even when accompanied by a valid quote", () => {
+test("a fabricated salary reason in finish is stripped: model free text outside the schema never reaches the report", () => {
+	// finish is lenient (an unknown field must not throw away the model's selection on its last
+	// step), so the call parses, but the unknown `reason` field is dropped before anything uses it.
 	const result = parseToolCall(["finish"], "finish", JSON.stringify({ candidates: [{ source_id: "source", reason: "This pays $1 million per year.", supporting_quote: "Build backend services." }] }));
-	assert.equal(result.ok, false);
+	assert.equal(result.ok, true);
+	assert.ok(result.ok && !JSON.stringify(result.args).includes("$1 million"), "the fabricated reason is gone");
 });
 
 test("finish cannot succeed with an unknown source on an empty run", async () => {

@@ -101,7 +101,11 @@ function traceSink(ctx: WorkContext<ResearchResult>, modelId: string) {
 		} else if (event.category === "tool") {
 			// Tool calls are not network calls, but they are what the model did with each step; a
 			// rejected finish (and why) must be visible in the evidence trace.
-			const errors = Array.isArray(detail.errors) ? (detail.errors as unknown[]).slice(0, 5).map((error) => String(error).slice(0, 200)) : undefined;
+			const errors = Array.isArray(detail.errors)
+				? (detail.errors as unknown[]).slice(0, 5).map((error) => String(error).slice(0, 200))
+				: typeof detail.error === "string"
+					? [detail.error.slice(0, 300)] // why a tool call's arguments were rejected (invalid_tool_call)
+					: undefined;
 			ctx.trace({
 				ts: new Date(event.startedAt),
 				step: event.step,

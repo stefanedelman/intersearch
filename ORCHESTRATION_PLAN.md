@@ -192,6 +192,22 @@ Steps 11 and 12 are finished (2026-11-26):
 - **Smoke test against Render:** 9/9. The real verify took 4.2 s and 721 tokens.
 - **Contract check against Render:** **10/10**, saved to `docs/contract-check-verifier-2026-11-26.md`.
 
+Steps 13 and 14 are done except the hand-check (2026-11-26):
+- **a2-run1** (`ac6be8df`): started from the dashboard as NYUgrader after about 40 idle minutes, with the verifier shown asleep. The wake-up took 15.1 s, overlapped with research. Research took 404.5 s, 384.6 s of it waiting on Groq's TPM limit. Verification took 7.2 s. **Partial**: the researcher hit 18/18 steps and ranked 2 of 5. 6 claims, all supported.
+- **a2-run2** (`c7007e9c`): run 25 minutes later with the verifier cold again (wake-up 16.1 s). Same two postings, now "still". 6 claims, all supported.
+- **Bug found:** the tool-call lines (added to the researcher's trace after run 1) showed `tool finish invalid (invalid_tool_call)` on the last step of run 2. My step 4 change had made `finish`'s argument schema strict, which threw away the model's selection and every model-written claim. Fixed (unknown fields stripped, over-long quotes and claims dropped, partial candidate lists accepted), with tests, and the 1B "fabricated reason" safety test rewritten to assert the text is stripped. No evidence run uses the fix yet: two runs used about 145K of the researcher model's 200K daily tokens.
+- **Exported:** `reports/a2-run1.md`, `reports/a2-run2.md`, `traces/a2-run1/`, `traces/a2-run2/`, and `docs/handcheck-a2-run1.md` (from `npm run tracker:handcheck`, which samples with a seed from the run id).
+- **Docs:**
+  - `ORCHESTRATION.md` answers all five questions with measured numbers.
+  - `README.md` has the new workflow and an evidence section.
+  - `docs/costs.md` records the verifier model and Render.
+  - `docs/decisions.md` has four new entries.
+  - `PROJECT_CHECKLIST.md` has an A2 section.
+- **Left for you:**
+  - The hand-check: fill in `docs/handcheck-a2-run1.md`, then the error count in ORCHESTRATION.md §5.
+  - Optionally, a2-run3 on a fresh Groq day, to get model-written claims verified.
+  - Merging `a2-orchestration`.
+
 ---
 
 ## 0. Decisions (recommended defaults; confirm before step 1)

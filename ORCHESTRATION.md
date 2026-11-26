@@ -9,12 +9,10 @@ Intersearch's 1B tracker is now three services that talk only over HTTP:
 The services share one schema file, [`backend/src/shared/contract.ts`](backend/src/shared/contract.ts), and libraries that call no service (guarded fetch, evidence normaliser, trace writer, worker runtime). A unit test fails if worker code imports another service's code or Prisma (`tests/unit/researcher.test.ts`, "service boundaries").
 
 Evidence:
-- `reports/a2-run1.md` and `traces/a2-run1/{orchestrator,researcher,verifier}.jsonl`.
+- `reports/a2-run1.md` and `traces/a2-run1/{orchestrator,researcher,verifier}.jsonl` (the cold-verifier run), and `reports/a2-run2.md` and `traces/a2-run2/` (a second cold run 25 minutes later, compared against run 1).
 - Contract checks: `docs/contract-check-researcher-2026-11-25.md` and `docs/contract-check-verifier-*.md`.
 - Verifier smoke test and cold start: `docs/verifier-smoke.md`.
 - Hand-check: `docs/handcheck-a2-run1.md`.
-
-> **Draft.** Sections 2 and 5 get their numbers from a2-run1; places marked ⟨run⟩ are filled after it.
 
 ## 1. The contract
 
@@ -153,8 +151,34 @@ The ledger reserves a request's full share before sending it, so a new request c
 
 ## 5. Was it worth it?
 
-⟨run⟩ Cost and latency of a2-run1 against 1B run 1 (355 s, 48,348 tokens, about $0.042 at list price).
+**Cost and latency against the 1B tracker** (prices: `docs/costs.md`).
 
-⟨run⟩ Claims: supported / unsupported / unreachable / unverified.
+| Run | Wall time | Researcher tokens | Verifier tokens | Est. cost at list price | Ranked | Claims checked |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1B run 1 (`255a44ee`, one agent) | 355 s | 48,348 | — | about $0.042 | 5 | — |
+| a2-run1 (`ac6be8df`) | 413.0 s | 74,120 | 3,126 | about $0.066 | 2 | 6 |
+| a2-run2 (`c7007e9c`) | 399.9 s | 70,766 | 3,126 | about $0.063 | 2 | 6 |
 
-⟨run⟩ Hand-check (`docs/handcheck-a2-run1.md`): every unsupported claim plus 10 supported claims picked with a seed from the run id, each checked by hand against its source. Errors found: … of …
+The cost estimates assume the researcher's input/output split matches 1B run 1 (2.3 % output). The contract's `usage` reports only total tokens, so this is an estimate.
+
+**Verification itself was cheap:**
+- 3,126 tokens on `gpt-oss-120b` per run: under $0.002, about 3 % of the run's cost.
+- 7.2 s of wall time, about 2 %.
+- The 15–16 s cold start was hidden behind research both times.
+
+The runs cost about 55 % more tokens than 1B run 1, but that's not the verifier: the researcher was given 18 steps instead of 14, and its context grows every step. All runs are paced by Groq's free 8K tokens per minute (93 % of a2-run1's time was waiting).
+
+**Claims:** 12 checked across the two runs, all `supported`, each with an excerpt that code found on the page: 0 unsupported, 0 unreachable, 0 unverified. Both runs ranked the same two postings (Figma, Stripe). Run 2 reports both as **Still in top K** and drops nothing; run 1, compared with the last 1B run, dropped two.
+
+**Hand-check** (`docs/handcheck-a2-run1.md`): every unsupported claim (none) plus the supported claims (all 6, since the sample size is 10), each to be checked by hand against its source. **Errors found: ⟨to be filled in by hand⟩.**
+
+**So, was it worth it? Not yet, for these two runs. Honestly:**
+- **The claims were easy.** All 12 were sentences the researcher's *code* wrote from fields of Greenhouse's structured job JSON: title, season, location, pay. The 1B tracker already quoted those from the page. Confirming them proves the plumbing works, not that the verifier catches mistakes.
+- **No model-written claim reached the verifier.** The model's claims arrive only through the researcher's `finish` call, and in both runs `finish` was rejected on the last step. The tool-call lines added to the researcher's trace after run 1 showed it in run 2: `tool finish invalid (invalid_tool_call)`. The cause was my own Assignment 2 change to `finish`'s argument schema, which was strict about extra fields and long quotes. It is fixed (unknown fields are ignored and over-long quotes and claims are dropped), with tests, but no evidence run used the fix: the daily Groq allowance was spent.
+- **The verifier's ability to say no is shown in tests and checks, not in these runs:**
+  - In the smoke and contract checks against Render, "example.com sells concert tickets" was `unsupported`, and claims citing `169.254.169.254` or `localhost` were `unreachable` without any fetch.
+  - In unit tests, a fabricated excerpt was downgraded to `unsupported`, and a page telling the verifier to mark everything supported changed nothing.
+
+**What the orchestration bought regardless of these numbers:** failure isolation. With the verifier down a run still finishes, with labelled `unverified` claims. With the researcher down, it shows the last top K marked stale. A slow or restarted worker costs a retry, not a double charge. And the evidence is per-service and correlated by `run_id`/`request_id`.
+
+**Verdict:** for a five-company internship tracker whose facts come from structured job boards, a second model checking code-extracted facts adds little. It becomes worth its small cost, about 3 % of a run, once the claims are the model's own words, or come from unstructured pages (careers sites, search results), where 1B had no independent check at all. The next run, with the `finish` fix, is the one that will show it.

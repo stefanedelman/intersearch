@@ -271,7 +271,12 @@ Deleting a profile cascades to everything under it.
 
 ### Assignment 2
 
-See [ORCHESTRATION.md](ORCHESTRATION.md) for the five answers and links to the evidence: `reports/a2-run1.md`, `traces/a2-run1/`, the contract-check tables in `docs/`, and the hand-check sheet.
+See [ORCHESTRATION.md](ORCHESTRATION.md) for the five answers, with measured numbers.
+
+- **a2-run1:** [`reports/a2-run1.md`](reports/a2-run1.md) and [`traces/a2-run1/`](traces/a2-run1) (orchestrator, researcher, verifier). Run `ac6be8df-f718-471f-83ea-c82722c2432c`, started from the dashboard as `NYUgrader` on 2026-11-26 with the Render verifier asleep (wake-up 15.1 s, hidden behind research). **Partial:** the researcher used its 18 steps and ranked 2 of K = 5; all 6 claims are supported.
+- **a2-run2:** [`reports/a2-run2.md`](reports/a2-run2.md) and [`traces/a2-run2/`](traces/a2-run2). Run `c7007e9c-c80d-4df8-89c6-db7462d7344b`, 25 minutes later, compared with run 1 (both postings still in the top K). Same outcome. Its tool-call trace showed why: `finish` was rejected on the last step. That bug is fixed; see ORCHESTRATION.md §5.
+- **Contract checks:** [researcher 9/9](docs/contract-check-researcher-2026-11-25.md), [verifier on Render 10/10](docs/contract-check-verifier-2026-11-26.md). Deploy steps: [docs/deploy-verifier.md](docs/deploy-verifier.md).
+- **Hand-check sheet:** [docs/handcheck-a2-run1.md](docs/handcheck-a2-run1.md).
 
 ### Assignment 1B
 

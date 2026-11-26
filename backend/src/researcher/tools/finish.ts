@@ -2,20 +2,26 @@ import { z } from "zod";
 import { quoteAppearsIn } from "../domain/normalize";
 import type { RunMemory } from "./context";
 
+/**
+ * Deliberately forgiving: finish is usually the model's last step, and an argument the schema
+ * rejects ends the run without the model's selection. Unknown fields are ignored (not rejected),
+ * and over-long quotes and claims are dropped later, in validateFinish. Only what code relies on is
+ * required: a list of candidates, each with a source_id.
+ */
 export const finishArgsSchema = z.object({
 	candidates: z
 		.array(
 			z.object({
-				source_id: z.string().min(1).max(100),
-				supporting_quote: z.string().max(300).optional(),
+				source_id: z.string().min(1).max(200),
+				supporting_quote: z.string().max(5000).optional(),
 				// Lenient on purpose: a claim that is too short, too long, or past the fourth is dropped
 				// in validateFinish instead of rejecting the whole finish call (which, on the last step,
 				// would end the run without the model's selection).
 				claims: z.array(z.string().max(2000)).max(20).optional(),
-			}).strict(),
+			}),
 		)
-		.max(20),
-}).strict();
+		.max(50),
+});
 
 export type FinishArgs = z.infer<typeof finishArgsSchema>;
 export type AcceptedNote = { sourceDocumentId: string; identityKey: string; quote: string };
@@ -43,7 +49,7 @@ export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: 
 	let droppedNotes = 0;
 	let droppedClaims = 0;
 	let accepted = 0;
-	for (const candidate of args.candidates) {
+	for (const candidate of args.candidates.slice(0, 20)) {
 		const observation = memory.observations.get(candidate.source_id);
 		if (!observation) {
 			errors.push(`source_id ${candidate.source_id} was not fetched in this run`);
@@ -53,7 +59,9 @@ export function validateFinish(memory: RunMemory, args: FinishArgs, sourceText: 
 		const usable = (candidate.claims ?? []).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => text.length >= 8 && text.length <= 300);
 		droppedClaims += (candidate.claims ?? []).length - Math.min(usable.length, MAX_CLAIMS_PER_CANDIDATE);
 		for (const text of usable.slice(0, MAX_CLAIMS_PER_CANDIDATE)) claims.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, text });
-		if (candidate.supporting_quote) {
+		if (candidate.supporting_quote && candidate.supporting_quote.trim().length > 300) {
+			droppedNotes += 1;
+		} else if (candidate.supporting_quote) {
 			const text = sourceText(candidate.source_id) ?? "";
 			if (quoteAppearsIn(candidate.supporting_quote, text)) {
 				notes.push({ sourceDocumentId: candidate.source_id, identityKey: observation.identity.key, quote: candidate.supporting_quote.trim() });

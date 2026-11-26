@@ -236,6 +236,23 @@ npm run build
 
 Do not delay the required live evidence and documentation to build these features.
 
+## 11. Assignment 2: agentic orchestration (ORCHESTRATION_PLAN.md)
+
+- [x] Three services over HTTP: orchestrator (in the API), researcher (laptop), verifier (Render `intersearch-verifier`, `openai/gpt-oss-120b`).
+- [x] The exact request envelope, our response envelope, separate tokens, auth before parsing, and status codes 200/400/401/409/500/503 + Retry-After.
+- [x] Idempotent workers (replay, in-flight 503, 409 on a different body) and an orchestrator ledger that charges each `request_id` once.
+- [x] Deadlines with partial results; verifier down → unverified; researcher down → previous top K, stale.
+- [x] Evidence ≤ 300 characters, checked in code after normalising; SSRF guard re-checked on every redirect hop.
+- [x] Runs start from the dashboard, with live progress, cancel, worker health and wake, and claim labels with evidence. `tracker:run` uses the same endpoint.
+- [x] JSONL traces with the spec's fields in all three services, collected per run.
+- [x] Contract checks: researcher 9/9 (`docs/contract-check-researcher-2026-11-25.md`), verifier on Render 10/10 (`docs/contract-check-verifier-2026-11-26.md`).
+- [x] Additive migration applied to the course database; 1B history intact; `npm run verify` 29/29.
+- [x] Genuine runs from the dashboard as NYUgrader with a cold verifier: `reports/a2-run1.md` and `traces/a2-run1/`; `reports/a2-run2.md` and `traces/a2-run2/`.
+- [x] ORCHESTRATION.md (five answers, with measured numbers).
+- [ ] **Hand-check by a person:** fill in `docs/handcheck-a2-run1.md`, then the error count in ORCHESTRATION.md §5.
+- [ ] Optional: a2-run3 with the `finish` fix (needs a fresh Groq daily allowance), to get model-written claims verified.
+- [ ] Merge `a2-orchestration` into `main` when satisfied (user-owned).
+
 ## Completion condition
 
 Mark the assignment complete only after successful genuine run evidence exists at least 24 hours apart, the grader can inspect it, measured documentation is finished, the clean-setup rehearsal passes, and the class repository URL has been submitted. The existing code/tests are a completed foundation, not a substitute for those deliverables.

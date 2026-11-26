@@ -235,6 +235,37 @@ describe("finish is lenient where strictness would lose the run's result", () =>
 		assert.match((finish?.detail as { errors: string[] }).errors[0]!, /made-up-id/);
 	});
 
+	test("extra fields and an over-long quote do not invalidate finish (it is usually the last step)", async () => {
+		const script: ScriptStep[] = [
+			{ tool: "fetch_article", args: { url: DETAIL(1001) } },
+			{
+				tool: "finish",
+				args: (messages: ModelMessage[]) => ({
+					summary: "Best matches found this run.",
+					candidates: [{ source_id: fetchedSourceIds(messages).get(DETAIL(1001)), title: "Backend intern", reason: "New York, Go", supporting_quote: "q".repeat(400), claims: ["The intern builds backend services in Go and Python."] }],
+				}),
+			},
+		];
+		const { send, body, log } = setup(script);
+		const sent = body();
+		const res = await send(sent);
+		assert.equal(res.body.status, "complete");
+		assert.ok((res.body.result.developments as ResearchResult["developments"])[0]!.claims.some((claim) => claim.text === "The intern builds backend services in Go and Python."));
+		assert.equal(log.lines({ requestId: sent.request_id }).find((line) => line.endpoint_or_tool === "tool finish")?.status, "ok");
+	});
+
+	test("a tool call whose arguments are rejected is traced with the reason", async () => {
+		const script: ScriptStep[] = [
+			{ tool: "fetch_article", args: { url: 42 } as unknown as Record<string, unknown> },
+			{ tool: "finish", args: { candidates: [] } },
+		];
+		const { send, body, log } = setup(script);
+		const sent = body();
+		await send(sent);
+		const invalid = log.lines({ requestId: sent.request_id }).find((line) => line.endpoint_or_tool === "tool fetch_article" && line.status === "invalid");
+		assert.match((invalid?.detail as { errors: string[] }).errors[0]!, /Invalid arguments for fetch_article: url/);
+	});
+
 	test("a finish with no usable candidate is still rejected, so the model can correct it", async () => {
 		const script: ScriptStep[] = [
 			{ tool: "fetch_article", args: { url: DETAIL(1001) } },
